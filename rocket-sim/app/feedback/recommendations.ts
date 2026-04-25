@@ -1,6 +1,7 @@
 import type { SimResult, RocketInputs } from '../physics/trajectory';
 import { G0 } from '../physics/atmosphere';
 import { interpolatedIsp } from '../physics/propulsion';
+import { MAX_Q_WARNING } from '../physics/maxq';
 
 export type RecommendationPriority = 'fix' | 'optimize' | 'nice-to-have';
 
@@ -75,7 +76,7 @@ export function generateRecommendations(result: SimResult, inputs: RocketInputs)
     });
   }
 
-  if (maxQ.pressure > 80000 && noseCone !== 'Ogive') {
+  if (maxQ.pressure > MAX_Q_WARNING && noseCone !== 'Ogive') {
     const cdOld = noseCone === 'Blunt' ? 0.40 : 0.20;
     const reduction = Math.round((1 - 0.15 / cdOld) * 100);
     recs.push({

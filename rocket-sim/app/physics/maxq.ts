@@ -13,5 +13,6 @@ export function dynamicPressure(altitudeM: number, velocityMs: number): number {
   return 0.5 * density * velocityMs * velocityMs;
 }
 
-export const MAX_Q_WARNING = 50000;   // ~50 kPa — Falcon 9 peaks at 35–50 kPa
-export const MAX_Q_FATAL   = 150000;  // ~150 kPa — high-margin structural failure threshold
+// Keep units in Pa internally; UI converts to kPa for display.
+export const MAX_Q_WARNING = 35000;  // 35 kPa caution band (typical modern launchers)
+export const MAX_Q_FATAL   = 90000;  // 90 kPa structural failure envelope for this sim

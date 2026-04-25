@@ -69,6 +69,8 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   // Gravity turn pitch program: launch vertical, pitch to horizontal by 80km
   const KICK_ALT = 3000;       // m — start pitching here (clear dense lower troposphere first)
   const PITCH_END_ALT = 80000; // m — fully horizontal by here; builds vx in thin air above 40km
+  const MAX_Q_TARGET = 40000;  // Pa — guidance target during throttle-down through max Q
+  const MIN_THROTTLE = 0.1;    // Keep some thrust to avoid a prolonged gravity-loss stall
 
   const launchTWR = calcTwr(thrustN, mass);
 
@@ -130,10 +132,19 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     let mdot = 0;
     if (burning && fuelRemaining > 0) {
       // Auto-throttle through max Q — mirrors real launch vehicle guidance.
-      // Full thrust below warning threshold; linearly taper to 20% at fatal limit.
+      // Full thrust below warning threshold; taper aggressively as q rises.
       const qNow = dynamicPressure(altitude, speed);
-      const throttle = qNow <= MAX_Q_WARNING ? 1.0
-        : Math.max(0.2, 1.0 - 0.8 * (qNow - MAX_Q_WARNING) / (MAX_Q_FATAL - MAX_Q_WARNING));
+      let throttle = 1.0;
+      if (qNow > MAX_Q_WARNING) {
+        const over = (qNow - MAX_Q_WARNING) / Math.max(MAX_Q_FATAL - MAX_Q_WARNING, 1);
+        // Quadratic taper softens the onset and clamps hard near the structural limit.
+        throttle = Math.max(MIN_THROTTLE, 1.0 - 0.9 * over * over);
+      }
+      if (qNow > MAX_Q_TARGET) {
+        // q scales with v^2; this keeps pressure near the guidance target when possible.
+        const targetScale = Math.sqrt(MAX_Q_TARGET / qNow);
+        throttle = Math.min(throttle, Math.max(MIN_THROTTLE, targetScale));
+      }
       const effectiveThrust = thrustN * throttle;
       thrustX = effectiveThrust * Math.cos(pitchRad);
       thrustY = effectiveThrust * Math.sin(pitchRad);
@@ -151,6 +162,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     vx += accelX * dt;
     vy += accelY * dt;
     altitude += vy * dt;
+    const updatedSpeed = Math.sqrt(vx * vx + vy * vy);
 
     if (burning && fuelRemaining > 0) {
       const consumed = mdot * dt;
@@ -162,11 +174,11 @@ export function runSimulation(inputs: RocketInputs): SimResult {
         burning = false;
         burnoutAlt = altitude;
         burnoutVx = vx;
-        burnoutV = speed;
+        burnoutV = updatedSpeed;
       }
     }
 
-    const q = dynamicPressure(altitude, speed);
+    const q = dynamicPressure(altitude, updatedSpeed);
     if (q > maxQPressure) {
       maxQPressure = q;
       maxQAlt = altitude;
@@ -174,12 +186,12 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     }
 
     if (altitude > maxAlt) maxAlt = altitude;
-    if (speed > maxVel) maxVel = speed;
+    if (updatedSpeed > maxVel) maxVel = updatedSpeed;
 
     if (!leoAchieved && altitude >= 200000 && vx >= 7800) leoAchieved = true;
 
     if (step % 4 === 0 || step < 20) {
-      trajectory.push({ time: t, altitude, velocity: speed, vx, mass, dynamicPressure: q });
+      trajectory.push({ time: t, altitude, velocity: updatedSpeed, vx, mass, dynamicPressure: q });
     }
 
     if (q > MAX_Q_FATAL) {
