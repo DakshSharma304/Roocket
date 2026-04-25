@@ -9,6 +9,7 @@ import SciencePanel from '../science/SciencePanel';
 import type { RocketInputs } from '../physics/trajectory';
 import type { NoseConeType } from '../physics/trajectory';
 import type { PropellantType } from '../physics/propulsion';
+import { interpolatedIsp } from '../physics/propulsion';
 import { G0 } from '../physics/atmosphere';
 
 // --- Types ---
@@ -562,6 +563,10 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
   };
   const totalMass = finalInputs.dryMass + finalInputs.payloadMass + finalInputs.fuelMass;
   const twr = finalInputs.thrustKN > 0 ? (finalInputs.thrustKN * 1000) / (totalMass * G0) : 0;
+  const hasNoseCone = parts.some(p => p.def.id.startsWith('nose-'));
+  const hasEngine   = parts.some(p => p.def.id.startsWith('engine-'));
+  const hasFuel     = parts.some(p => p.def.id.startsWith('tank-'));
+  const hasFins     = parts.some(p => p.def.id === 'fin-left' || p.def.id === 'fin-right');
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -688,6 +693,10 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
             twr={twr}
             totalMass={totalMass}
             onOpenScience={() => { setSciencePartId(null); setShowScience(true); }}
+            hasNoseCone={hasNoseCone}
+            hasEngine={hasEngine}
+            hasFuel={hasFuel}
+            hasFins={hasFins}
           />
         )}
 
@@ -706,14 +715,19 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
 
 export default Designer;
 
-// --- Summary Panel (unchanged from original) ---
-function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpenScience }: {
+// --- Summary Panel ---
+function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpenScience,
+  hasNoseCone, hasEngine, hasFuel, hasFins }: {
   derived: Partial<RocketInputs>;
   overrides: Partial<RocketInputs>;
   setOverrides: (v: Partial<RocketInputs>) => void;
   twr: number;
   totalMass: number;
   onOpenScience: () => void;
+  hasNoseCone: boolean;
+  hasEngine: boolean;
+  hasFuel: boolean;
+  hasFins: boolean;
 }) {
   const fields: { key: keyof RocketInputs; label: string; unit: string }[] = [
     { key: 'payloadMass', label: 'Payload',  unit: 'kg' },
@@ -723,24 +737,87 @@ function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpen
     { key: 'diameter',    label: 'Diameter', unit: 'm'  },
   ];
 
+  // Live performance estimates
+  const finalFuel      = overrides.fuelMass    ?? derived.fuelMass    ?? 0;
+  const finalDry       = overrides.dryMass     ?? derived.dryMass     ?? 10;
+  const finalPayload   = overrides.payloadMass ?? derived.payloadMass ?? 0.1;
+  const finalThrust    = (overrides.thrustKN   ?? derived.thrustKN    ?? 0) * 1000;
+  const finalPropellant = overrides.propellant ?? derived.propellant  ?? 'LOX/RP-1';
+  const isp  = interpolatedIsp(finalPropellant as PropellantType, 40000);
+  const m0   = finalDry + finalPayload + finalFuel;
+  const m1   = finalDry + finalPayload;
+  const dv   = m1 > 0 && m0 > m1 ? isp * G0 * Math.log(m0 / m1) : 0;
+  const mdot = finalThrust > 0 ? finalThrust / (isp * G0) : 0;
+  const burnTime = mdot > 0 ? finalFuel / mdot : 0;
+
+  // Status
+  const ready    = twr >= 1.3 && dv >= 4500 && hasEngine && hasFuel && hasNoseCone;
+  const caution  = !ready && twr >= 1.0 && hasEngine && hasFuel;
+  const statusColor = ready ? '#22c55e' : caution ? '#f59e0b' : '#ef4444';
+  const statusDot   = ready ? '●' : caution ? '◉' : '○';
+  const statusText  = ready ? 'GO' : caution ? 'CAUTION' : 'NO-GO';
+  const missionLabel = !hasEngine || !hasFuel ? 'incomplete'
+    : twr < 1.0   ? 'pad sitter'
+    : dv  < 2000  ? 'ballistic'
+    : dv  < 5000  ? 'suborbital likely'
+    : dv  < 8500  ? 'high suborbital'
+    : 'LEO capable';
   const twrColor = twr >= 1.3 ? '#22c55e' : twr >= 1.0 ? '#f59e0b' : '#ef4444';
+  const dvColor  = dv  >= 8000 ? '#22c55e' : dv  >= 4000 ? '#f59e0b' : '#ef4444';
 
   return (
     <div className="p-3 flex-1 overflow-y-auto">
-      <h3 className="text-[9px] uppercase tracking-widest text-[#64748b] mb-2">Summary / Override</h3>
+      <h3 className="text-[9px] uppercase tracking-widest text-[#64748b] mb-2">Assembly Status</h3>
 
-      {totalMass > 0 && (
-        <div className="mb-3 p-2 rounded border" style={{ background: '#040408', borderColor: '#1e1e35' }}>
-          <div className="flex justify-between text-[10px]">
-            <span className="text-[#64748b]">Launch TWR</span>
-            <span className="font-mono" style={{ color: twrColor }}>{twr.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between text-[10px] mt-0.5">
-            <span className="text-[#64748b]">Total Mass</span>
-            <span className="font-mono text-[#e2e8f0]">{(totalMass / 1000).toFixed(1)}t</span>
-          </div>
+      {/* Live status card — always visible once any part is placed */}
+      <div className="mb-3 p-2 rounded border" style={{ background: '#040408', borderColor: '#1e1e35' }}>
+        {/* Header row */}
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-mono font-semibold" style={{ color: statusColor }}>
+            {statusDot} {statusText}
+          </span>
+          <span className="text-[9px] text-[#475569]">{missionLabel}</span>
         </div>
-      )}
+
+        {/* Key metrics */}
+        <div className="flex justify-between text-[10px] mb-0.5">
+          <span className="text-[#64748b]">TWR</span>
+          <span className="font-mono" style={{ color: twrColor }}>{twr > 0 ? twr.toFixed(2) : '—'}</span>
+        </div>
+        <div className="flex justify-between text-[10px] mb-0.5">
+          <span className="text-[#64748b]">Total Mass</span>
+          <span className="font-mono text-[#e2e8f0]">{totalMass > 0 ? `${(totalMass / 1000).toFixed(1)} t` : '—'}</span>
+        </div>
+        <div className="flex justify-between text-[10px] mb-0.5">
+          <span className="text-[#64748b]">Δv</span>
+          <span className="font-mono" style={{ color: dvColor }}>{dv > 0 ? `${Math.round(dv).toLocaleString()} m/s` : '—'}</span>
+        </div>
+        <div className="flex justify-between text-[10px] mb-2">
+          <span className="text-[#64748b]">Burn Time</span>
+          <span className="font-mono text-[#e2e8f0]">{burnTime > 0 ? `${Math.round(burnTime)} s` : '—'}</span>
+        </div>
+
+        {/* Component checklist */}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 pt-1.5" style={{ borderTop: '1px solid #1e1e35' }}>
+          {([
+            { label: 'Nose Cone', ok: hasNoseCone, req: true },
+            { label: 'Engine',    ok: hasEngine,   req: true },
+            { label: 'Fuel Tank', ok: hasFuel,     req: true },
+            { label: 'Fins',      ok: hasFins,     req: false },
+          ] as { label: string; ok: boolean; req: boolean }[]).map(({ label, ok, req }) => (
+            <div key={label} className="flex items-center gap-1">
+              <span className="text-[9px]" style={{ color: ok ? '#22c55e' : req ? '#ef4444' : '#475569' }}>
+                {ok ? '●' : '○'}
+              </span>
+              <span className="text-[9px]" style={{ color: ok ? '#94a3b8' : req ? '#fca5a5' : '#475569' }}>
+                {label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <h3 className="text-[9px] uppercase tracking-widest text-[#64748b] mb-2">Override</h3>
 
       <style>{`.sum-input { width: 100%; background: #040408; border: 1px solid #1e1e35; color: #e2e8f0; font-size: 11px; padding: 4px 8px; border-radius: 4px; outline: none; } .sum-input:focus { border-color: #7c3aed; }`}</style>
 

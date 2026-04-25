@@ -66,9 +66,9 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   const dt = 0.5;
   const maxSteps = 4000;
 
-  // Gravity turn pitch program: launch vertical, pitch to horizontal by 120km
-  const KICK_ALT = 3000;        // m — start pitching here (clear dense lower troposphere first)
-  const PITCH_END_ALT = 120000; // m — fully horizontal by here
+  // Gravity turn pitch program: launch vertical, pitch to horizontal by 80km
+  const KICK_ALT = 3000;       // m — start pitching here (clear dense lower troposphere first)
+  const PITCH_END_ALT = 80000; // m — fully horizontal by here; builds vx in thin air above 40km
 
   const launchTWR = calcTwr(thrustN, mass);
 
@@ -174,7 +174,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     if (altitude > maxAlt) maxAlt = altitude;
     if (speed > maxVel) maxVel = speed;
 
-    if (!leoAchieved && altitude >= 200000 && vx >= 7800) leoAchieved = true;
+    if (!leoAchieved && altitude >= 160000 && vx >= 7600) leoAchieved = true;
 
     if (step % 4 === 0 || step < 20) {
       trajectory.push({ time: t, altitude, velocity: speed, vx, mass, dynamicPressure: q });
@@ -209,7 +209,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     outcome = 'DISINTEGRATED';
   } else if (launchTWR < 1.0) {
     outcome = 'PAD_SITTER';
-  } else if (leoAchieved || (burnoutAlt >= 200000 && burnoutVx >= 7800)) {
+  } else if (leoAchieved || (burnoutAlt >= 160000 && burnoutVx >= 7600)) {
     outcome = 'LEO';
   } else if (maxAlt >= 100000) {
     outcome = 'SUBORBITAL';
