@@ -194,6 +194,10 @@ export function runSimulation(inputs: RocketInputs): SimResult {
       trajectory.push({ time: t, altitude, velocity: updatedSpeed, vx, mass, dynamicPressure: q });
     }
 
+    // This simulator models ascent guidance only; stop at apogee instead of simulating reentry.
+    // Otherwise descent can dominate Max-Q and make ascent feedback look physically wrong.
+    if (!burning && vy < 0) break;
+
     if (q > MAX_Q_FATAL) {
       disintegrated = true;
       disintegrationAlt = altitude;
