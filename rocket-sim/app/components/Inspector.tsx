@@ -177,7 +177,7 @@ export default function Inspector({ part, onUpdate, onRemove, onMove, onDuplicat
         </>
       )}
 
-      {id === 'fins' && (
+      {(id === 'fin-left' || id === 'fin-right') && (
         <>
           <Field label="Fin Dry Mass (kg)">
             <input type="number" value={val(part, 'dryMass', 20)} onChange={e => onUpdate(part.instanceId, 'dryMass', Number(e.target.value))} className="field-input" />

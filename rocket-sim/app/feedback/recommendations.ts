@@ -94,8 +94,8 @@ export function generateRecommendations(result: SimResult, inputs: RocketInputs)
     recs.push({
       id: 'add-fins',
       reason: 'No fins detected — passive aerodynamic stability uncontrolled during ascent.',
-      partId: 'fins',
-      actionLabel: 'Add Swept Fins',
+      partId: 'fin-left',
+      actionLabel: 'Add Fins',
       expectedImprovement: 'Passive stabilization through Max Q',
       priority: 'nice-to-have',
     });

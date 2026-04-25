@@ -6,7 +6,7 @@ export type PartType =
   | 'fairing' | 'payload-bay'
   | 'tank-small' | 'tank-medium' | 'tank-large'
   | 'engine-merlin' | 'engine-rutherford' | 'engine-solid'
-  | 'fins';
+  | 'fin-left' | 'fin-right';
 
 export interface PartDef {
   id: PartType;
@@ -29,7 +29,8 @@ export const PART_DEFS: PartDef[] = [
   { id: 'engine-merlin',    label: 'Merlin-class',        category: 'Engines',    color: '#b45309', defaults: { thrustKN: 914,  propellant: 'LOX/RP-1', dryMass: 470 }, stats: '914 kN' },
   { id: 'engine-rutherford',label: 'Rutherford-class',    category: 'Engines',    color: '#92400e', defaults: { thrustKN: 24,   propellant: 'LOX/RP-1', dryMass: 35  }, stats: '24 kN' },
   { id: 'engine-solid',     label: 'Solid Booster',       category: 'Engines',    color: '#7c2d12', defaults: { thrustKN: 1200, propellant: 'Solid',    dryMass: 800 }, stats: '1200 kN' },
-  { id: 'fins',             label: 'Fins',                category: 'Stability',  color: '#374151', defaults: { dryMass: 20 },                                         stats: '20 kg' },
+  { id: 'fin-left',         label: 'Left Fin',            category: 'Stability',  color: '#374151', defaults: { dryMass: 10 },                                         stats: '10 kg' },
+  { id: 'fin-right',        label: 'Right Fin',           category: 'Stability',  color: '#4b5563', defaults: { dryMass: 10 },                                         stats: '10 kg' },
 ];
 
 const CATEGORIES = ['Nose Cones', 'Payload', 'Tanks', 'Engines', 'Stability'];

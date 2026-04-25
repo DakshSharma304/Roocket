@@ -21,7 +21,6 @@ export interface PlacedPart {
   width: number;
   height: number;
   attachedTo?: string;
-  attachSide?: 'left' | 'right';
 }
 
 export const PART_W: Record<PartType, number> = {
@@ -29,7 +28,7 @@ export const PART_W: Record<PartType, number> = {
   'fairing': 100,    'payload-bay': 90,
   'tank-small': 80,  'tank-medium': 80,   'tank-large': 80,
   'engine-merlin': 80, 'engine-rutherford': 70, 'engine-solid': 90,
-  'fins': 50,
+  'fin-left': 45, 'fin-right': 45,
 };
 
 export const PART_H: Record<PartType, number> = {
@@ -37,7 +36,7 @@ export const PART_H: Record<PartType, number> = {
   'fairing': 70,     'payload-bay': 60,
   'tank-small': 55,  'tank-medium': 95,   'tank-large': 145,
   'engine-merlin': 75, 'engine-rutherford': 55, 'engine-solid': 85,
-  'fins': 55,
+  'fin-left': 55, 'fin-right': 55,
 };
 
 export interface DesignerHandle {
@@ -46,8 +45,8 @@ export interface DesignerHandle {
 }
 
 // --- SVG part shapes ---
-function PartSVG({ type, color, uid, attachSide }: {
-  type: PartType; color: string; uid: string; attachSide?: 'left' | 'right';
+function PartSVG({ type, color, uid }: {
+  type: PartType; color: string; uid: string;
 }) {
   const gid = `g-${uid}`;
   const overlay = `url(#${gid})`;
@@ -65,42 +64,28 @@ function PartSVG({ type, color, uid, attachSide }: {
   const stroke = 'rgba(255,255,255,0.12)';
   const sw = '1.5';
 
-  if (type === 'fins') {
-    if (attachSide === 'left') {
-      const d = 'M 90 0 L 90 100 L 0 100 Z';
-      return (
-        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
-          {grad}
-          <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
-          <path d={d} fill={overlay} />
-        </svg>
-      );
-    }
-    if (attachSide === 'right') {
-      const d = 'M 10 0 L 10 100 L 100 100 Z';
-      return (
-        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
-          {grad}
-          <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
-          <path d={d} fill={overlay} />
-        </svg>
-      );
-    }
-    // Standalone: bilateral fins + center body
+  if (type === 'fin-left') {
+    const d = 'M 90 0 L 90 100 L 0 100 Z';
     return (
       <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
         {grad}
-        <rect x="38" y="0" width="24" height="100" fill={color} stroke={stroke} strokeWidth={sw} />
-        <path d="M 38 15 L 0 100 L 38 100 Z" fill={color} stroke={stroke} strokeWidth={sw} />
-        <path d="M 62 15 L 100 100 L 62 100 Z" fill={color} stroke={stroke} strokeWidth={sw} />
-        <rect x="38" y="0" width="24" height="100" fill={overlay} />
-        <path d="M 38 15 L 0 100 L 38 100 Z" fill={overlay} />
-        <path d="M 62 15 L 100 100 L 62 100 Z" fill={overlay} />
+        <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
+        <path d={d} fill={overlay} />
+      </svg>
+    );
+  }
+  if (type === 'fin-right') {
+    const d = 'M 10 0 L 10 100 L 100 100 Z';
+    return (
+      <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
+        {grad}
+        <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
+        <path d={d} fill={overlay} />
       </svg>
     );
   }
 
-  const paths: Record<PartType, string> = {
+  const paths: Record<string, string> = {
     'nose-ogive':       'M 50 0 C 85 40 100 70 100 100 L 0 100 C 0 70 15 40 50 0 Z',
     'nose-conical':     'M 50 2 L 100 100 L 0 100 Z',
     'nose-blunt':       'M 2 48 A 48 48 0 0 1 98 48 L 98 100 L 2 100 Z',
@@ -112,10 +97,9 @@ function PartSVG({ type, color, uid, attachSide }: {
     'engine-merlin':    'M 12 0 L 88 0 L 100 100 L 0 100 Z',
     'engine-rutherford':'M 12 0 L 88 0 L 100 100 L 0 100 Z',
     'engine-solid':     'M 10 0 L 90 0 L 100 100 L 0 100 Z',
-    'fins':             '',
   };
 
-  const d = paths[type] || paths['tank-medium'];
+  const d = paths[type] ?? paths['tank-medium'];
 
   return (
     <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
@@ -127,10 +111,10 @@ function PartSVG({ type, color, uid, attachSide }: {
 }
 
 // --- Part renderer (absolutely positioned div) ---
-function PartRenderer({ part, selected, highlightSide, onMouseDown, onClick }: {
+function PartRenderer({ part, selected, snapHighlight, onMouseDown, onClick }: {
   part: PlacedPart;
   selected: boolean;
-  highlightSide?: 'left' | 'right';
+  snapHighlight: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onClick: (e: React.MouseEvent) => void;
 }) {
@@ -146,7 +130,7 @@ function PartRenderer({ part, selected, highlightSide, onMouseDown, onClick }: {
         zIndex: selected ? 20 : 10,
         filter: selected
           ? 'drop-shadow(0 0 10px rgba(124,58,237,0.9))'
-          : highlightSide
+          : snapHighlight
           ? 'drop-shadow(0 0 10px rgba(6,182,212,0.8))'
           : undefined,
         userSelect: 'none',
@@ -159,7 +143,6 @@ function PartRenderer({ part, selected, highlightSide, onMouseDown, onClick }: {
         type={part.def.id}
         color={part.def.color}
         uid={part.instanceId}
-        attachSide={part.attachSide}
       />
       {/* Part label */}
       <div style={{
@@ -213,9 +196,56 @@ function SnapGuide({ axis, value }: { axis: 'x' | 'y'; value: number }) {
   );
 }
 
+// --- Snap detection ---
+interface SnapResult {
+  targetId: string;
+  snapX: number;
+  snapY: number;
+  isFin: boolean;
+}
+
+function findSnap(
+  dragX: number, dragY: number,
+  dragW: number, dragH: number,
+  dragType: PartType,
+  others: PlacedPart[],
+): SnapResult | null {
+  const dLeft   = dragX - dragW / 2;
+  const dRight  = dragX + dragW / 2;
+  const dTop    = dragY - dragH / 2;
+  const dBottom = dragY + dragH / 2;
+  const BODY_SNAP = 25;
+  const FIN_SNAP  = 45;
+
+  for (const other of others) {
+    const oLeft   = other.x - other.width  / 2;
+    const oRight  = other.x + other.width  / 2;
+    const oTop    = other.y - other.height / 2;
+    const oBottom = other.y + other.height / 2;
+
+    if (dragType === 'fin-left' && other.def.id.startsWith('tank-')) {
+      if (Math.abs(dRight - oLeft) < FIN_SNAP && Math.abs(dragY - other.y) < other.height / 2 + 30)
+        return { targetId: other.instanceId, snapX: oLeft - dragW / 2, snapY: other.y, isFin: true };
+    }
+    if (dragType === 'fin-right' && other.def.id.startsWith('tank-')) {
+      if (Math.abs(dLeft - oRight) < FIN_SNAP && Math.abs(dragY - other.y) < other.height / 2 + 30)
+        return { targetId: other.instanceId, snapX: oRight + dragW / 2, snapY: other.y, isFin: true };
+    }
+    if (dragType === 'fin-left' || dragType === 'fin-right') continue;
+    if (other.def.id === 'fin-left' || other.def.id === 'fin-right') continue;
+
+    const horizOk = Math.abs(dragX - other.x) < Math.max(dragW, other.width) * 0.65;
+    if (horizOk && Math.abs(dBottom - oTop) < BODY_SNAP)
+      return { targetId: other.instanceId, snapX: other.x, snapY: oTop - dragH / 2, isFin: false };
+    if (horizOk && Math.abs(dTop - oBottom) < BODY_SNAP)
+      return { targetId: other.instanceId, snapX: other.x, snapY: oBottom + dragH / 2, isFin: false };
+  }
+  return null;
+}
+
 // --- Attached position helper ---
 function calcAttachedPos(child: PlacedPart, parent: PlacedPart): PlacedPart {
-  const x = child.attachSide === 'left'
+  const x = child.def.id === 'fin-left'
     ? parent.x - parent.width / 2 - child.width / 2
     : parent.x + parent.width / 2 + child.width / 2;
   return { ...child, x, y: parent.y };
@@ -253,7 +283,7 @@ function deriveInputs(parts: PlacedPart[]): Partial<RocketInputs> {
       thrustKN += v('thrustKN');
       dryMass += v('dryMass');
       propellant = s('propellant', 'LOX/RP-1') as PropellantType;
-    } else if (p.def.id === 'fins') {
+    } else if (p.def.id === 'fin-left' || p.def.id === 'fin-right') {
       dryMass += v('dryMass');
     }
   }
@@ -299,18 +329,18 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
   const [sciencePartId, setSciencePartId] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Partial<RocketInputs>>({});
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
-  const [attachHighlight, setAttachHighlight] = useState<{ partId: string; side: 'left' | 'right' } | null>(null);
+  const [snapTarget, setSnapTarget] = useState<SnapResult | null>(null);
   const [snapGuides, setSnapGuides] = useState<Array<{ axis: 'x' | 'y'; value: number }>>([]);
 
   const outerCanvasRef = useRef<HTMLDivElement>(null);
   const panelDragRef = useRef<{ def: PartDef } | null>(null);
   const canvasDragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const partsRef = useRef<PlacedPart[]>([]);
-  const attachHLRef = useRef(attachHighlight);
+  const snapTargetRef = useRef<SnapResult | null>(null);
   const zoomRef = useRef(zoom);
 
   useEffect(() => { partsRef.current = parts; }, [parts]);
-  useEffect(() => { attachHLRef.current = attachHighlight; }, [attachHighlight]);
+  useEffect(() => { snapTargetRef.current = snapTarget; }, [snapTarget]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
   // Expose imperative API for VerdictScreen recommendations
@@ -324,7 +354,8 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
       let x = cw / 2, y = ch / 2;
       if (def.id.startsWith('engine-')) y = ch * 0.75;
       else if (def.id.startsWith('nose-')) y = ch * 0.18;
-      else if (def.id === 'fins') { x = cw / 2 - 80; y = ch / 2; }
+      else if (def.id === 'fin-left') { x = cw / 2 - 120; y = ch / 2; }
+      else if (def.id === 'fin-right') { x = cw / 2 + 120; y = ch / 2; }
       if (pos) { x = pos.x; y = pos.y; }
       setParts(prev => [...prev, {
         instanceId: `${def.id}-${Date.now()}`,
@@ -350,30 +381,23 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
 
   const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
     if (panelDragRef.current) {
-      setGhostPos({ x: e.clientX, y: e.clientY });
-
-      // Fin attachment detection
-      if (panelDragRef.current.def.id === 'fins') {
-        const rect = outerCanvasRef.current?.getBoundingClientRect();
-        if (rect) {
-          const z = zoomRef.current;
-          const cx = (e.clientX - rect.left) / z;
-          const cy = (e.clientY - rect.top) / z;
-          let found: { partId: string; side: 'left' | 'right' } | null = null;
-          for (const part of partsRef.current) {
-            if (!part.def.id.startsWith('tank-')) continue;
-            const leftEdge  = part.x - part.width / 2;
-            const rightEdge = part.x + part.width / 2;
-            const vertOk = Math.abs(cy - part.y) < part.height / 2 + 30;
-            if (vertOk && Math.abs(cx - leftEdge) < 45) {
-              found = { partId: part.instanceId, side: 'left' }; break;
-            }
-            if (vertOk && Math.abs(cx - rightEdge) < 45) {
-              found = { partId: part.instanceId, side: 'right' }; break;
-            }
-          }
-          setAttachHighlight(found);
+      const rect = outerCanvasRef.current?.getBoundingClientRect();
+      if (rect) {
+        const z = zoomRef.current;
+        const def = panelDragRef.current.def;
+        const w = PART_W[def.id];
+        const h = PART_H[def.id];
+        const cx = (e.clientX - rect.left) / z;
+        const cy = (e.clientY - rect.top)  / z;
+        const snap = findSnap(cx, cy, w, h, def.id, partsRef.current);
+        setSnapTarget(snap);
+        if (snap) {
+          setGhostPos({ x: snap.snapX * z + rect.left, y: snap.snapY * z + rect.top });
+        } else {
+          setGhostPos({ x: e.clientX, y: e.clientY });
         }
+      } else {
+        setGhostPos({ x: e.clientX, y: e.clientY });
       }
       return;
     }
@@ -389,25 +413,18 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
       if (e.shiftKey) {
         const axisX = (rect.width / z) / 2;
         if (Math.abs(cx - axisX) < 30) { cx = axisX; guides.push({ axis: 'x', value: axisX }); }
-        const dragId = canvasDragRef.current.id;
-        const dragging = partsRef.current.find(p => p.instanceId === dragId);
-        if (dragging) {
-          for (const other of partsRef.current) {
-            if (other.instanceId === dragId) continue;
-            const top = other.y - other.height / 2;
-            const bot = other.y + other.height / 2;
-            if (Math.abs(cy - dragging.height / 2 - bot) < 12) {
-              cy = bot + dragging.height / 2; guides.push({ axis: 'y', value: bot }); break;
-            }
-            if (Math.abs(cy + dragging.height / 2 - top) < 12) {
-              cy = top - dragging.height / 2; guides.push({ axis: 'y', value: top }); break;
-            }
-          }
-        }
       }
       setSnapGuides(guides);
 
       const dragId = canvasDragRef.current.id;
+      const dragging = partsRef.current.find(p => p.instanceId === dragId);
+      if (dragging) {
+        const others = partsRef.current.filter(p => p.instanceId !== dragId && !p.attachedTo);
+        const snap = findSnap(cx, cy, dragging.width, dragging.height, dragging.def.id, others);
+        setSnapTarget(snap);
+        if (snap) { cx = snap.snapX; cy = snap.snapY; }
+      }
+
       setParts(prev => {
         const updated = prev.map(p =>
           p.instanceId === dragId ? { ...p, x: cx, y: cy } : p
@@ -430,38 +447,37 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
         const w = PART_W[def.id];
         const h = PART_H[def.id];
         const z = zoomRef.current;
-        const cx = (e.clientX - rect.left) / z;
-        const cy = (e.clientY - rect.top) / z;
-        const hl = attachHLRef.current;
+        const snap = snapTargetRef.current;
+        const cx = snap ? snap.snapX : (e.clientX - rect.left) / z;
+        const cy = snap ? snap.snapY : (e.clientY - rect.top)  / z;
 
         const newPart: PlacedPart = {
           instanceId: `${def.id}-${Date.now()}`,
           def, overrides: {}, x: cx, y: cy, width: w, height: h,
+          attachedTo: snap?.isFin ? snap.targetId : undefined,
         };
-
-        if (def.id === 'fins' && hl) {
-          const parent = partsRef.current.find(p => p.instanceId === hl.partId);
-          if (parent) {
-            newPart.attachedTo = parent.instanceId;
-            newPart.attachSide = hl.side;
-            newPart.x = hl.side === 'left'
-              ? parent.x - parent.width / 2 - w / 2
-              : parent.x + parent.width / 2 + w / 2;
-            newPart.y = parent.y;
-          }
-        }
 
         setParts(prev => [...prev, newPart]);
       }
       panelDragRef.current = null;
       setGhostPos(null);
-      setAttachHighlight(null);
+      setSnapTarget(null);
       return;
     }
 
     if (canvasDragRef.current) {
+      const dragId = canvasDragRef.current.id;
+      const snap = snapTargetRef.current;
+      setParts(prev => prev.map(p => {
+        if (p.instanceId !== dragId) return p;
+        if (p.def.id === 'fin-left' || p.def.id === 'fin-right') {
+          return { ...p, attachedTo: snap?.isFin ? snap.targetId : undefined };
+        }
+        return p;
+      }));
       canvasDragRef.current = null;
       setSnapGuides([]);
+      setSnapTarget(null);
     }
   }, []);
 
@@ -522,7 +538,6 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
       x: orig.x + 20,
       y: orig.y + 20,
       attachedTo: undefined,
-      attachSide: undefined,
     };
     setParts(prev => [...prev, clone]);
   };
@@ -623,7 +638,7 @@ const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onR
               key={part.instanceId}
               part={part}
               selected={selected === part.instanceId}
-              highlightSide={attachHighlight?.partId === part.instanceId ? attachHighlight.side : undefined}
+              snapHighlight={snapTarget?.targetId === part.instanceId}
               onMouseDown={e => startCanvasDrag(part, e)}
               onClick={e => { e.stopPropagation(); setSelected(s => s === part.instanceId ? null : part.instanceId); }}
             />
