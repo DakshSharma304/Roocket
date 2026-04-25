@@ -78,6 +78,8 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   const HIGH_TWR_THRESHOLD = 1.6;  // only apply active max-Q throttle shaping for punchy liftoff TWR
   const MIN_THROTTLE = 0.1;        // global lower bound to avoid engine cutoff artifacts
   const MIN_MAXQ_THROTTLE = 0.35;  // practical floor inside the 5-12 km max-Q control band
+  const LEO_ALTITUDE_TARGET = 180000; // m — tolerant to guidance/timestep quantization around 200 km
+  const LEO_VX_TARGET = 7800;         // m/s horizontal velocity target for LEO
 
   const launchTWR = calcTwr(thrustN, mass);
 
@@ -209,7 +211,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     if (altitude > maxAlt) maxAlt = altitude;
     if (updatedSpeed > maxVel) maxVel = updatedSpeed;
 
-    if (!leoAchieved && altitude >= 200000 && vx >= 7800) leoAchieved = true;
+    if (!leoAchieved && altitude >= LEO_ALTITUDE_TARGET && vx >= LEO_VX_TARGET) leoAchieved = true;
 
     if (step % 4 === 0 || step < 20) {
       trajectory.push({ time: t, altitude, velocity: updatedSpeed, vx, mass, dynamicPressure: q });
@@ -246,7 +248,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     outcome = 'DISINTEGRATED';
   } else if (launchTWR < 1.0) {
     outcome = 'PAD_SITTER';
-  } else if (leoAchieved || (burnoutAlt >= 200000 && burnoutVx >= 7800)) {
+  } else if (leoAchieved || (burnoutAlt >= LEO_ALTITUDE_TARGET && burnoutVx >= LEO_VX_TARGET)) {
     outcome = 'LEO';
   } else if (maxAlt >= 100000) {
     outcome = 'SUBORBITAL';
