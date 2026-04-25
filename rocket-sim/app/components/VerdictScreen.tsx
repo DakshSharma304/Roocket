@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import TrajectoryArc from './TrajectoryArc';
 import FeedbackPanel from '../feedback/FeedbackPanel';
 import { analyzeDesign } from '../feedback/analyzer';
+import { generateRecommendations, PartRecommendation } from '../feedback/recommendations';
+import { withGlossary } from '../glossary/autoWrap';
 import type { SimResult } from '../physics/trajectory';
 import type { RocketInputs } from '../physics/trajectory';
 import { MAX_Q_WARNING, MAX_Q_FATAL } from '../physics/maxq';
@@ -56,12 +58,50 @@ function AnimatedNumber({ target, suffix = '', decimals = 0 }: { target: number;
   return <>{current.toFixed(decimals)}{suffix}</>;
 }
 
-interface Stat { label: string; rawValue: number; value: string; sub?: string; color?: string; animate?: boolean; animDecimals?: number; animSuffix?: string; }
-interface Props { result: SimResult; inputs: RocketInputs; onBack: () => void; }
+const PRIORITY_CONFIG = {
+  fix:            { icon: '🔴', label: 'FIX',          color: '#ef4444' },
+  optimize:       { icon: '🟡', label: 'OPTIMIZE',      color: '#f59e0b' },
+  'nice-to-have': { icon: '🔵', label: 'NICE TO HAVE',  color: '#3b82f6' },
+} as const;
 
-export default function VerdictScreen({ result, inputs, onBack }: Props) {
+function RecommendationCard({ rec, onAdd }: { rec: PartRecommendation; onAdd: () => void }) {
+  const cfg = PRIORITY_CONFIG[rec.priority];
+  return (
+    <div
+      className="rounded-md bg-[#0a0a12] px-4 py-3"
+      style={{ border: `1px solid ${cfg.color}33` }}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: cfg.color }}>
+          {cfg.icon} {cfg.label}
+        </span>
+      </div>
+      <p className="text-sm font-semibold text-[#e2e8f0] mb-1">{rec.actionLabel}</p>
+      <p className="text-xs text-[#94a3b8] mb-1">{withGlossary(rec.reason)}</p>
+      <p className="text-xs text-cyan-400 mb-3">Expected: {rec.expectedImprovement}</p>
+      <button
+        onClick={onAdd}
+        className="text-xs px-3 py-1.5 rounded border transition-colors hover:bg-[#7c3aed]/10"
+        style={{ borderColor: '#7c3aed50', color: '#a78bfa' }}
+      >
+        + Add to Rocket
+      </button>
+    </div>
+  );
+}
+
+interface Stat { label: string; rawValue: number; value: string; sub?: string; color?: string; animate?: boolean; animDecimals?: number; animSuffix?: string; }
+interface Props {
+  result: SimResult;
+  inputs: RocketInputs;
+  onBack: () => void;
+  onAddPart?: (partId: string, isSwap: boolean, swapCategory?: string) => void;
+}
+
+export default function VerdictScreen({ result, inputs, onBack, onAddPart }: Props) {
   const { outcome, finalDeltaV, maxAltitudeM, burnTimeS, maxQ, launchTWR, burnoutVelocityMs } = result;
   const feedback = analyzeDesign(result, inputs);
+  const recs = generateRecommendations(result, inputs);
 
   const badge = {
     LEO:          { text: 'REACHED LEO ✅',        color: '#22c55e' },
@@ -88,12 +128,12 @@ export default function VerdictScreen({ result, inputs, onBack }: Props) {
   })();
 
   const stats: Stat[] = [
-    { label: 'Delta-v', rawValue: finalDeltaV / 1000, value: `${(finalDeltaV / 1000).toFixed(2)} km/s`, sub: 'LEO needs 7.80 km/s', color: finalDeltaV >= 7800 ? '#22c55e' : '#ef4444', animate: true, animDecimals: 2, animSuffix: ' km/s' },
-    { label: 'Max Altitude', rawValue: maxAltitudeM / 1000, value: `${(maxAltitudeM / 1000).toFixed(1)} km`, color: maxAltitudeM >= 200000 ? '#22c55e' : maxAltitudeM >= 100000 ? '#f59e0b' : '#ef4444', animate: true, animDecimals: 1, animSuffix: ' km' },
-    { label: 'Burn Time', rawValue: burnTimeS, value: `${burnTimeS.toFixed(0)} s`, animate: true, animDecimals: 0, animSuffix: ' s' },
-    { label: 'Max Q', rawValue: maxQ.pressure / 1000, value: `${(maxQ.pressure / 1000).toFixed(1)} kPa`, sub: `at ${(maxQ.altitudeM / 1000).toFixed(1)} km`, color: maxQ.pressure > MAX_Q_FATAL ? '#ef4444' : maxQ.pressure > MAX_Q_WARNING ? '#f59e0b' : '#22c55e', animate: true, animDecimals: 1, animSuffix: ' kPa' },
-    { label: 'Launch TWR', rawValue: launchTWR, value: launchTWR.toFixed(2), color: launchTWR >= 1.3 ? '#22c55e' : launchTWR >= 1.0 ? '#f59e0b' : '#ef4444', animate: true, animDecimals: 2 },
-    { label: 'Burnout Velocity', rawValue: burnoutVelocityMs, value: `${burnoutVelocityMs.toFixed(0)} m/s`, sub: 'LEO needs 7,800 m/s', color: burnoutVelocityMs >= 7800 ? '#22c55e' : '#ef4444', animate: true, animDecimals: 0, animSuffix: ' m/s' },
+    { label: 'Delta-v',          rawValue: finalDeltaV / 1000,      value: `${(finalDeltaV / 1000).toFixed(2)} km/s`,  sub: 'LEO needs 7.80 km/s',  color: finalDeltaV >= 7800 ? '#22c55e' : '#ef4444',                              animate: true, animDecimals: 2, animSuffix: ' km/s' },
+    { label: 'Max Altitude',     rawValue: maxAltitudeM / 1000,     value: `${(maxAltitudeM / 1000).toFixed(1)} km`,    color: maxAltitudeM >= 200000 ? '#22c55e' : maxAltitudeM >= 100000 ? '#f59e0b' : '#ef4444',                    animate: true, animDecimals: 1, animSuffix: ' km' },
+    { label: 'Burn Time',        rawValue: burnTimeS,               value: `${burnTimeS.toFixed(0)} s`,                                                                                                                                  animate: true, animDecimals: 0, animSuffix: ' s' },
+    { label: 'Max Q',            rawValue: maxQ.pressure / 1000,    value: `${(maxQ.pressure / 1000).toFixed(1)} kPa`,  sub: `at ${(maxQ.altitudeM / 1000).toFixed(1)} km`, color: maxQ.pressure > MAX_Q_FATAL ? '#ef4444' : maxQ.pressure > MAX_Q_WARNING ? '#f59e0b' : '#22c55e', animate: true, animDecimals: 1, animSuffix: ' kPa' },
+    { label: 'Launch TWR',       rawValue: launchTWR,               value: launchTWR.toFixed(2),                        color: launchTWR >= 1.3 ? '#22c55e' : launchTWR >= 1.0 ? '#f59e0b' : '#ef4444',                              animate: true, animDecimals: 2 },
+    { label: 'Burnout Velocity', rawValue: burnoutVelocityMs,       value: `${burnoutVelocityMs.toFixed(0)} m/s`,        sub: 'LEO needs 7,800 m/s',  color: burnoutVelocityMs >= 7800 ? '#22c55e' : '#ef4444',                        animate: true, animDecimals: 0, animSuffix: ' m/s' },
   ];
 
   return (
@@ -115,14 +155,16 @@ export default function VerdictScreen({ result, inputs, onBack }: Props) {
         <div className="grid grid-cols-3 gap-3 mb-8">
           {stats.map(s => (
             <div key={s.label} className="glass-card rounded-lg p-4">
-              <div className="text-[10px] uppercase tracking-widest text-[#64748b] mb-1">{s.label}</div>
+              <div className="text-[10px] uppercase tracking-widest text-[#64748b] mb-1">
+                {withGlossary(s.label)}
+              </div>
               <div className="text-xl font-bold font-mono" style={{ color: s.color ?? '#e2e8f0' }}>
                 {s.animate
                   ? <AnimatedNumber target={s.rawValue} decimals={s.animDecimals ?? 0} suffix={s.animSuffix ?? ''} />
                   : s.value
                 }
               </div>
-              {s.sub && <div className="text-[10px] text-[#64748b] mt-0.5">{s.sub}</div>}
+              {s.sub && <div className="text-[10px] text-[#64748b] mt-0.5">{withGlossary(s.sub)}</div>}
             </div>
           ))}
         </div>
@@ -135,18 +177,38 @@ export default function VerdictScreen({ result, inputs, onBack }: Props) {
 
         {/* Comparison */}
         <div className="glass-card rounded-lg p-4 mb-6 text-sm text-[#e2e8f0]">
-          {twrComparison(result) ?? comparisonLine(result, inputs)}
+          {withGlossary(twrComparison(result) ?? comparisonLine(result, inputs))}
         </div>
 
         {/* Failure message */}
         <div className="text-center mb-8">
-          <p className="text-xl font-semibold text-[#e2e8f0] max-w-xl mx-auto leading-snug">{failureMessage}</p>
+          <p className="text-xl font-semibold text-[#e2e8f0] max-w-xl mx-auto leading-snug">
+            {withGlossary(failureMessage)}
+          </p>
         </div>
 
         {/* Design Analysis */}
-        <div className="mb-8">
+        <div className="mb-6">
           <FeedbackPanel items={feedback} />
         </div>
+
+        {/* Recommended Changes */}
+        {recs.length > 0 && (
+          <div className="mb-8">
+            <div className="text-xs uppercase tracking-widest text-[#64748b] mb-3">
+              🔧 Recommended Changes
+            </div>
+            <div className="flex flex-col gap-3">
+              {recs.map(rec => (
+                <RecommendationCard
+                  key={rec.id}
+                  rec={rec}
+                  onAdd={() => onAddPart?.(rec.partId, rec.isSwap ?? false, rec.swapCategory)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="text-center">
           <button onClick={onBack} className="btn-primary px-8 py-3 rounded text-sm tracking-wide font-bold">

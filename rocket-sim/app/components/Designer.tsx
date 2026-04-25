@@ -1,5 +1,8 @@
 'use client';
-import { useRef, useState, useCallback, useEffect, useReducer } from 'react';
+import React, {
+  useRef, useState, useCallback, useEffect, useImperativeHandle,
+} from 'react';
+import ReactDOM from 'react-dom';
 import PartsPanel, { PART_DEFS, PartDef, PartType } from './PartsPanel';
 import Inspector from './Inspector';
 import SciencePanel from '../science/SciencePanel';
@@ -8,135 +11,217 @@ import type { NoseConeType } from '../physics/trajectory';
 import type { PropellantType } from '../physics/propulsion';
 import { G0 } from '../physics/atmosphere';
 
+// --- Types ---
 export interface PlacedPart {
   instanceId: string;
   def: PartDef;
   overrides: Record<string, number | string>;
+  x: number;   // center x in canvas coords
+  y: number;   // center y in canvas coords
+  width: number;
+  height: number;
+  attachedTo?: string;
+  attachSide?: 'left' | 'right';
 }
 
-// --- Part geometry config ---
-const PART_H: Record<PartType, number> = {
-  'nose-ogive': 80, 'nose-conical': 80, 'nose-blunt': 60,
-  'fairing': 70, 'payload-bay': 60,
-  'tank-small': 55, 'tank-medium': 95, 'tank-large': 145,
-  'engine-merlin': 75, 'engine-rutherford': 55, 'engine-solid': 85,
-  'fins': 32,
+export const PART_W: Record<PartType, number> = {
+  'nose-ogive': 80,  'nose-conical': 80,  'nose-blunt': 80,
+  'fairing': 100,    'payload-bay': 90,
+  'tank-small': 80,  'tank-medium': 80,   'tank-large': 80,
+  'engine-merlin': 80, 'engine-rutherford': 70, 'engine-solid': 90,
+  'fins': 50,
 };
-const PART_W = 80;
-const ORIGIN_X = 160; // canvas center x
 
-// --- Draw individual part shapes ---
-function drawPartShape(
-  ctx: CanvasRenderingContext2D,
-  id: PartType,
-  color: string,
-  x: number, y: number,
-  w: number, h: number,
-  selected: boolean,
-  label: string,
-) {
-  ctx.save();
-  if (selected) { ctx.shadowColor = '#7c3aed'; ctx.shadowBlur = 16; }
-  ctx.strokeStyle = selected ? '#7c3aed' : 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = selected ? 1.5 : 1;
+export const PART_H: Record<PartType, number> = {
+  'nose-ogive': 80,  'nose-conical': 80,  'nose-blunt': 60,
+  'fairing': 70,     'payload-bay': 60,
+  'tank-small': 55,  'tank-medium': 95,   'tank-large': 145,
+  'engine-merlin': 75, 'engine-rutherford': 55, 'engine-solid': 85,
+  'fins': 55,
+};
 
-  // gradient shading for cylinder effect
-  const grad = ctx.createLinearGradient(x, y, x + w, y);
-  grad.addColorStop(0,   lighten(color, 0.3));
-  grad.addColorStop(0.4, color);
-  grad.addColorStop(1,   darken(color, 0.35));
-  ctx.fillStyle = grad;
+export interface DesignerHandle {
+  addPart: (def: PartDef, pos?: { x: number; y: number }) => void;
+  swapPart: (category: string, def: PartDef) => void;
+}
 
-  ctx.beginPath();
-  if (id === 'nose-ogive') {
-    ctx.moveTo(x + w / 2, y);
-    ctx.bezierCurveTo(x + w * 0.85, y + h * 0.4, x + w, y + h * 0.7, x + w, y + h);
-    ctx.lineTo(x, y + h);
-    ctx.bezierCurveTo(x, y + h * 0.7, x + w * 0.15, y + h * 0.4, x + w / 2, y);
-  } else if (id === 'nose-conical') {
-    ctx.moveTo(x + w / 2, y + 2);
-    ctx.lineTo(x + w, y + h);
-    ctx.lineTo(x, y + h);
-    ctx.closePath();
-  } else if (id === 'nose-blunt') {
-    const cx = x + w / 2;
-    const cy = y + h * 0.45;
-    const rx = w / 2;
-    const ry = h * 0.5;
-    ctx.ellipse(cx, cy, rx, ry, 0, Math.PI, 0);
-    ctx.lineTo(x + w, y + h);
-    ctx.lineTo(x, y + h);
-    ctx.closePath();
-  } else if (id === 'engine-merlin' || id === 'engine-rutherford' || id === 'engine-solid') {
-    ctx.moveTo(x + 8, y);
-    ctx.lineTo(x + w - 8, y);
-    ctx.bezierCurveTo(x + w - 8, y, x + w + 10, y + h, x + w + 8, y + h);
-    ctx.lineTo(x - 8, y + h);
-    ctx.bezierCurveTo(x - 8, y + h, x + 8, y, x + 8, y);
-    ctx.closePath();
-  } else if (id === 'fins') {
-    // fins on both sides, slim center body
-    ctx.rect(x + 10, y, w - 20, h);
-    ctx.fill();
-    ctx.stroke();
-    // left fin
-    ctx.beginPath();
-    ctx.moveTo(x + 10, y + h * 0.2);
-    ctx.lineTo(x - 20, y + h);
-    ctx.lineTo(x + 10, y + h);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    // right fin
-    ctx.beginPath();
-    ctx.moveTo(x + w - 10, y + h * 0.2);
-    ctx.lineTo(x + w + 20, y + h);
-    ctx.lineTo(x + w - 10, y + h);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-    return;
-  } else {
-    // cylinder with domed ends (tanks, fairings, payload)
-    const dome = Math.min(12, h * 0.12);
-    ctx.moveTo(x, y + dome);
-    ctx.quadraticCurveTo(x, y, x + w / 2, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + dome);
-    ctx.lineTo(x + w, y + h - dome);
-    ctx.quadraticCurveTo(x + w, y + h, x + w / 2, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - dome);
-    ctx.closePath();
+// --- SVG part shapes ---
+function PartSVG({ type, color, uid, attachSide }: {
+  type: PartType; color: string; uid: string; attachSide?: 'left' | 'right';
+}) {
+  const gid = `g-${uid}`;
+  const overlay = `url(#${gid})`;
+
+  const grad = (
+    <defs>
+      <linearGradient id={gid} x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0"   stopColor="rgba(255,255,255,0.22)" />
+        <stop offset="0.4" stopColor="rgba(255,255,255,0)" />
+        <stop offset="1"   stopColor="rgba(0,0,0,0.28)" />
+      </linearGradient>
+    </defs>
+  );
+
+  const stroke = 'rgba(255,255,255,0.12)';
+  const sw = '1.5';
+
+  if (type === 'fins') {
+    if (attachSide === 'left') {
+      const d = 'M 90 0 L 90 100 L 0 100 Z';
+      return (
+        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
+          {grad}
+          <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
+          <path d={d} fill={overlay} />
+        </svg>
+      );
+    }
+    if (attachSide === 'right') {
+      const d = 'M 10 0 L 10 100 L 100 100 Z';
+      return (
+        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
+          {grad}
+          <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
+          <path d={d} fill={overlay} />
+        </svg>
+      );
+    }
+    // Standalone: bilateral fins + center body
+    return (
+      <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
+        {grad}
+        <rect x="38" y="0" width="24" height="100" fill={color} stroke={stroke} strokeWidth={sw} />
+        <path d="M 38 15 L 0 100 L 38 100 Z" fill={color} stroke={stroke} strokeWidth={sw} />
+        <path d="M 62 15 L 100 100 L 62 100 Z" fill={color} stroke={stroke} strokeWidth={sw} />
+        <rect x="38" y="0" width="24" height="100" fill={overlay} />
+        <path d="M 38 15 L 0 100 L 38 100 Z" fill={overlay} />
+        <path d="M 62 15 L 100 100 L 62 100 Z" fill={overlay} />
+      </svg>
+    );
   }
-  ctx.fill();
-  ctx.stroke();
 
-  // label
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = '9px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(label.slice(0, 13), x + w / 2, y + h / 2 + 3);
-  ctx.restore();
+  const paths: Record<PartType, string> = {
+    'nose-ogive':       'M 50 0 C 85 40 100 70 100 100 L 0 100 C 0 70 15 40 50 0 Z',
+    'nose-conical':     'M 50 2 L 100 100 L 0 100 Z',
+    'nose-blunt':       'M 2 48 A 48 48 0 0 1 98 48 L 98 100 L 2 100 Z',
+    'fairing':          'M 0 8 Q 0 0 8 0 L 92 0 Q 100 0 100 8 L 100 92 Q 100 100 92 100 L 8 100 Q 0 100 0 92 Z',
+    'payload-bay':      'M 0 8 Q 0 0 8 0 L 92 0 Q 100 0 100 8 L 100 92 Q 100 100 92 100 L 8 100 Q 0 100 0 92 Z',
+    'tank-small':       'M 0 8 Q 0 0 8 0 L 92 0 Q 100 0 100 8 L 100 92 Q 100 100 92 100 L 8 100 Q 0 100 0 92 Z',
+    'tank-medium':      'M 0 8 Q 0 0 8 0 L 92 0 Q 100 0 100 8 L 100 92 Q 100 100 92 100 L 8 100 Q 0 100 0 92 Z',
+    'tank-large':       'M 0 8 Q 0 0 8 0 L 92 0 Q 100 0 100 8 L 100 92 Q 100 100 92 100 L 8 100 Q 0 100 0 92 Z',
+    'engine-merlin':    'M 12 0 L 88 0 L 100 100 L 0 100 Z',
+    'engine-rutherford':'M 12 0 L 88 0 L 100 100 L 0 100 Z',
+    'engine-solid':     'M 10 0 L 90 0 L 100 100 L 0 100 Z',
+    'fins':             '',
+  };
+
+  const d = paths[type] || paths['tank-medium'];
+
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block' }}>
+      {grad}
+      <path d={d} fill={color} stroke={stroke} strokeWidth={sw} />
+      <path d={d} fill={overlay} />
+    </svg>
+  );
 }
 
-function lighten(hex: string, amt: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.min(255, (n >> 16) + Math.round(255 * amt));
-  const g = Math.min(255, ((n >> 8) & 0xff) + Math.round(255 * amt));
-  const b = Math.min(255, (n & 0xff) + Math.round(255 * amt));
-  return `rgb(${r},${g},${b})`;
+// --- Part renderer (absolutely positioned div) ---
+function PartRenderer({ part, selected, highlightSide, onMouseDown, onClick }: {
+  part: PlacedPart;
+  selected: boolean;
+  highlightSide?: 'left' | 'right';
+  onMouseDown: (e: React.MouseEvent) => void;
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: part.x - part.width / 2,
+        top:  part.y - part.height / 2,
+        width: part.width,
+        height: part.height,
+        cursor: 'grab',
+        zIndex: selected ? 20 : 10,
+        filter: selected
+          ? 'drop-shadow(0 0 10px rgba(124,58,237,0.9))'
+          : highlightSide
+          ? 'drop-shadow(0 0 10px rgba(6,182,212,0.8))'
+          : undefined,
+        userSelect: 'none',
+        pointerEvents: 'auto',
+      }}
+      onMouseDown={onMouseDown}
+      onClick={onClick}
+    >
+      <PartSVG
+        type={part.def.id}
+        color={part.def.color}
+        uid={part.instanceId}
+        attachSide={part.attachSide}
+      />
+      {/* Part label */}
+      <div style={{
+        position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', pointerEvents: 'none',
+      }}>
+        <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'rgba(255,255,255,0.65)', textAlign: 'center', lineHeight: 1.2 }}>
+          {part.def.label.slice(0, 13)}
+        </span>
+      </div>
+    </div>
+  );
 }
 
-function darken(hex: string, amt: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.max(0, (n >> 16) - Math.round(255 * amt));
-  const g = Math.max(0, ((n >> 8) & 0xff) - Math.round(255 * amt));
-  const b = Math.max(0, (n & 0xff) - Math.round(255 * amt));
-  return `rgb(${r},${g},${b})`;
+// --- Ghost (portal, fixed position) ---
+function GhostPart({ def, x, y }: { def: PartDef; x: number; y: number }) {
+  if (typeof document === 'undefined') return null;
+  const w = PART_W[def.id];
+  const h = PART_H[def.id];
+  return ReactDOM.createPortal(
+    <div style={{
+      position: 'fixed',
+      left: x - w / 2,
+      top: y - h / 2,
+      width: w, height: h,
+      opacity: 0.55,
+      pointerEvents: 'none',
+      zIndex: 9999,
+    }}>
+      <PartSVG type={def.id} color={def.color} uid={`ghost-${def.id}`} />
+    </div>,
+    document.body,
+  );
 }
 
-// --- Physics derivation ---
+// --- Snap guide line ---
+function SnapGuide({ axis, value }: { axis: 'x' | 'y'; value: number }) {
+  if (axis === 'x') {
+    return (
+      <div style={{
+        position: 'absolute', left: value, top: 0, width: 1, height: '100%',
+        background: 'rgba(6,182,212,0.7)', pointerEvents: 'none', zIndex: 30,
+      }} />
+    );
+  }
+  return (
+    <div style={{
+      position: 'absolute', top: value, left: 0, height: 1, width: '100%',
+      background: 'rgba(6,182,212,0.7)', pointerEvents: 'none', zIndex: 30,
+    }} />
+  );
+}
+
+// --- Attached position helper ---
+function calcAttachedPos(child: PlacedPart, parent: PlacedPart): PlacedPart {
+  const x = child.attachSide === 'left'
+    ? parent.x - parent.width / 2 - child.width / 2
+    : parent.x + parent.width / 2 + child.width / 2;
+  return { ...child, x, y: parent.y };
+}
+
+// --- Physics helpers ---
 function deriveInputs(parts: PlacedPart[]): Partial<RocketInputs> {
   let dryMass = 0, fuelMass = 0, payloadMass = 0, thrustKN = 0;
   let noseCone: NoseConeType = 'Ogive';
@@ -158,7 +243,9 @@ function deriveInputs(parts: PlacedPart[]): Partial<RocketInputs> {
     } else if (p.def.id.startsWith('tank-')) {
       const fuel = v('fuelMass');
       const mat = s('material', 'Aluminum 2219');
-      const sfMap: Record<string,number> = { 'Aluminum 2219': 0.06, 'Carbon Fiber': 0.04, 'Stainless': 0.09, 'Titanium': 0.05 };
+      const sfMap: Record<string, number> = {
+        'Aluminum 2219': 0.06, 'Carbon Fiber': 0.04, 'Stainless': 0.09, 'Titanium': 0.05,
+      };
       const sf = sfMap[mat] ?? 0.06;
       fuelMass += fuel;
       dryMass += fuel * sf * 1.3;
@@ -175,25 +262,25 @@ function deriveInputs(parts: PlacedPart[]): Partial<RocketInputs> {
   else if (parts.some(p => p.def.id === 'tank-large')) diameter = 3.7;
   else if (parts.some(p => p.def.id === 'tank-medium')) diameter = 2.0;
 
-  return { dryMass: Math.max(10, dryMass), fuelMass: Math.max(1, fuelMass), payloadMass: Math.max(0.1, payloadMass), thrustKN, noseCone, propellant, diameter };
+  return {
+    dryMass: Math.max(10, dryMass),
+    fuelMass: Math.max(1, fuelMass),
+    payloadMass: Math.max(0.1, payloadMass),
+    thrustKN, noseCone, propellant, diameter,
+  };
 }
 
-// --- CoM calculation (simplified centroid of stacked parts) ---
 function calcCoM(parts: PlacedPart[]): number | null {
   if (parts.length === 0) return null;
-  let totalMass = 0;
-  let momentSum = 0;
-  let y = 0;
+  let totalMass = 0, momentSum = 0;
   for (const p of parts) {
-    const h = PART_H[p.def.id];
     const v = (k: string, fb = 0) => Number(p.overrides[k] ?? p.def.defaults[k] ?? fb);
     const partMass =
       (p.def.id.startsWith('tank-') ? v('fuelMass', 5000) * 1.08 : 0) +
       v('dryMass', 50) +
       (p.def.id === 'payload-bay' ? v('payloadMass', 300) : 0);
-    momentSum += (y + h / 2) * partMass;
+    momentSum += p.y * partMass;
     totalMass += partMass;
-    y += h;
   }
   return totalMass > 0 ? momentSum / totalMass : null;
 }
@@ -203,173 +290,213 @@ interface Props {
   onRun: (inputs: RocketInputs) => void;
 }
 
-export default function Designer({ onRun }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+const Designer = React.forwardRef<DesignerHandle, Props>(function Designer({ onRun }, ref) {
   const [parts, setParts] = useState<PlacedPart[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [draggingPart, setDraggingPart] = useState<PartDef | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [panY, setPanY] = useState(0);
   const [showGrid, setShowGrid] = useState(false);
   const [showScience, setShowScience] = useState(false);
   const [sciencePartId, setSciencePartId] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Partial<RocketInputs>>({});
-  const [, forceRedraw] = useReducer(x => x + 1, 0);
+  const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
+  const [attachHighlight, setAttachHighlight] = useState<{ partId: string; side: 'left' | 'right' } | null>(null);
+  const [snapGuides, setSnapGuides] = useState<Array<{ axis: 'x' | 'y'; value: number }>>([]);
 
-  const totalH = Math.max(400, parts.reduce((s, p) => s + PART_H[p.def.id], 0) + 80);
-  const CANVAS_W = 320;
+  const outerCanvasRef = useRef<HTMLDivElement>(null);
+  const panelDragRef = useRef<{ def: PartDef } | null>(null);
+  const canvasDragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const partsRef = useRef<PlacedPart[]>([]);
+  const attachHLRef = useRef(attachHighlight);
+  const zoomRef = useRef(zoom);
 
-  const redraw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  useEffect(() => { partsRef.current = parts; }, [parts]);
+  useEffect(() => { attachHLRef.current = attachHighlight; }, [attachHighlight]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#040408';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Expose imperative API for VerdictScreen recommendations
+  useImperativeHandle(ref, () => ({
+    addPart(def: PartDef, pos?: { x: number; y: number }) {
+      const w = PART_W[def.id] ?? 80;
+      const h = PART_H[def.id] ?? 80;
+      const rect = outerCanvasRef.current?.getBoundingClientRect();
+      const cw = rect ? rect.width : 600;
+      const ch = rect ? rect.height : 500;
+      let x = cw / 2, y = ch / 2;
+      if (def.id.startsWith('engine-')) y = ch * 0.75;
+      else if (def.id.startsWith('nose-')) y = ch * 0.18;
+      else if (def.id === 'fins') { x = cw / 2 - 80; y = ch / 2; }
+      if (pos) { x = pos.x; y = pos.y; }
+      setParts(prev => [...prev, {
+        instanceId: `${def.id}-${Date.now()}`,
+        def, overrides: {}, x, y, width: w, height: h,
+      }]);
+    },
+    swapPart(category: string, def: PartDef) {
+      const w = PART_W[def.id] ?? 80;
+      const h = PART_H[def.id] ?? 80;
+      const rect = outerCanvasRef.current?.getBoundingClientRect();
+      const cw = rect ? rect.width : 600;
+      const ch = rect ? rect.height : 500;
+      let x = cw / 2, y = ch * 0.18;
+      setParts(prev => {
+        const filtered = category === 'nose' ? prev.filter(p => !p.def.id.startsWith('nose-')) : prev;
+        return [...filtered, {
+          instanceId: `${def.id}-${Date.now()}`,
+          def, overrides: {}, x, y, width: w, height: h,
+        }];
+      });
+    },
+  }), []);
 
-    // faint grid
-    if (showGrid) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx < canvas.width; gx += 20) {
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, canvas.height); ctx.stroke();
+  const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
+    if (panelDragRef.current) {
+      setGhostPos({ x: e.clientX, y: e.clientY });
+
+      // Fin attachment detection
+      if (panelDragRef.current.def.id === 'fins') {
+        const rect = outerCanvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          const z = zoomRef.current;
+          const cx = (e.clientX - rect.left) / z;
+          const cy = (e.clientY - rect.top) / z;
+          let found: { partId: string; side: 'left' | 'right' } | null = null;
+          for (const part of partsRef.current) {
+            if (!part.def.id.startsWith('tank-')) continue;
+            const leftEdge  = part.x - part.width / 2;
+            const rightEdge = part.x + part.width / 2;
+            const vertOk = Math.abs(cy - part.y) < part.height / 2 + 30;
+            if (vertOk && Math.abs(cx - leftEdge) < 45) {
+              found = { partId: part.instanceId, side: 'left' }; break;
+            }
+            if (vertOk && Math.abs(cx - rightEdge) < 45) {
+              found = { partId: part.instanceId, side: 'right' }; break;
+            }
+          }
+          setAttachHighlight(found);
+        }
       }
-      for (let gy = 0; gy < canvas.height; gy += 20) {
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(canvas.width, gy); ctx.stroke();
-      }
-    }
-
-    if (parts.length === 0) {
-      ctx.fillStyle = '#1e1e35';
-      ctx.font = '12px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('Drag parts here to build', canvas.width / 2, canvas.height / 2 - 10);
-      ctx.fillStyle = '#0f0f20';
-      ctx.font = '10px monospace';
-      ctx.fillText('↑ from Parts Library on the left', canvas.width / 2, canvas.height / 2 + 10);
       return;
     }
 
-    const ox = ORIGIN_X - PART_W / 2;
-    let y = 20;
+    if (canvasDragRef.current) {
+      const rect = outerCanvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const z = zoomRef.current;
+      let cx = (e.clientX - rect.left) / z - canvasDragRef.current.offsetX;
+      let cy = (e.clientY - rect.top)  / z - canvasDragRef.current.offsetY;
 
-    // draw parts
-    for (const part of parts) {
-      const h = PART_H[part.def.id];
-      drawPartShape(ctx, part.def.id as PartType, part.def.color, ox, y, PART_W, h, part.instanceId === selected, part.def.label);
-      y += h;
-    }
-
-    // height measurement line
-    const totalPartH = y - 20;
-    ctx.strokeStyle = 'rgba(100,116,139,0.4)';
-    ctx.setLineDash([3, 4]);
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(ox - 28, 20); ctx.lineTo(ox - 28, y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#64748b';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${(totalPartH / 20).toFixed(1)}m`, ox - 28, 20 + totalPartH / 2);
-
-    // diameter indicator
-    ctx.strokeStyle = 'rgba(100,116,139,0.3)';
-    ctx.setLineDash([3, 4]);
-    ctx.beginPath(); ctx.moveTo(ox, y + 12); ctx.lineTo(ox + PART_W, y + 12); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#64748b';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`⌀ ${(PART_W / 20).toFixed(1)}m`, ox + PART_W / 2, y + 22);
-
-    // CoM dot
-    const comY = calcCoM(parts);
-    if (comY !== null) {
-      const comCanvasY = 20 + comY;
-      ctx.beginPath();
-      ctx.arc(ox + PART_W + 16, comCanvasY, 5, 0, Math.PI * 2);
-      ctx.fillStyle = '#3b82f6';
-      ctx.fill();
-      ctx.shadowColor = '#3b82f6';
-      ctx.shadowBlur = 8;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = '#3b82f6';
-      ctx.font = '8px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText('CoM', ox + PART_W + 24, comCanvasY + 3);
-    }
-
-    // CoP estimate (3/4 of total height — rough aerodynamic estimate)
-    const copY = 20 + totalPartH * 0.72;
-    ctx.beginPath();
-    ctx.arc(ox + PART_W + 16, copY, 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#ef4444';
-    ctx.shadowColor = '#ef4444';
-    ctx.shadowBlur = 8;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ef4444';
-    ctx.font = '8px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText('CoP', ox + PART_W + 24, copY + 3);
-
-    // stability label
-    const stable = comY !== null && comY < totalPartH * 0.72;
-    ctx.fillStyle = stable ? '#22c55e' : '#ef4444';
-    ctx.font = '8px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(stable ? '✓ STABLE' : '⚠ UNSTABLE', ox + PART_W / 2, y + 36);
-  }, [parts, selected, showGrid]);
-
-  useEffect(() => { redraw(); }, [redraw]);
-  useEffect(() => { forceRedraw(); }, [parts, selected, showGrid]);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (!draggingPart) return;
-    setParts(prev => [...prev, {
-      instanceId: `${draggingPart.id}-${Date.now()}`,
-      def: draggingPart,
-      overrides: {},
-    }]);
-    setDraggingPart(null);
-  };
-
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const clickY = (e.clientY - rect.top) / zoom;
-    const clickX = (e.clientX - rect.left) / zoom;
-    const ox = ORIGIN_X - PART_W / 2;
-
-    let y = 20;
-    for (const part of parts) {
-      const h = PART_H[part.def.id];
-      if (clickY >= y && clickY <= y + h && clickX >= ox - 25 && clickX <= ox + PART_W + 25) {
-        setSelected(part.instanceId === selected ? null : part.instanceId);
-        return;
+      const guides: Array<{ axis: 'x' | 'y'; value: number }> = [];
+      if (e.shiftKey) {
+        const axisX = (rect.width / z) / 2;
+        if (Math.abs(cx - axisX) < 30) { cx = axisX; guides.push({ axis: 'x', value: axisX }); }
+        const dragId = canvasDragRef.current.id;
+        const dragging = partsRef.current.find(p => p.instanceId === dragId);
+        if (dragging) {
+          for (const other of partsRef.current) {
+            if (other.instanceId === dragId) continue;
+            const top = other.y - other.height / 2;
+            const bot = other.y + other.height / 2;
+            if (Math.abs(cy - dragging.height / 2 - bot) < 12) {
+              cy = bot + dragging.height / 2; guides.push({ axis: 'y', value: bot }); break;
+            }
+            if (Math.abs(cy + dragging.height / 2 - top) < 12) {
+              cy = top - dragging.height / 2; guides.push({ axis: 'y', value: top }); break;
+            }
+          }
+        }
       }
-      y += h;
-    }
-    setSelected(null);
-  };
+      setSnapGuides(guides);
 
-  const handleWheel = (e: React.WheelEvent) => {
+      const dragId = canvasDragRef.current.id;
+      setParts(prev => {
+        const updated = prev.map(p =>
+          p.instanceId === dragId ? { ...p, x: cx, y: cy } : p
+        );
+        const parent = updated.find(p => p.instanceId === dragId)!;
+        return updated.map(p =>
+          p.attachedTo === dragId ? calcAttachedPos(p, parent) : p
+        );
+      });
+    }
+  }, []);
+
+  const handleGlobalMouseUp = useCallback((e: MouseEvent) => {
+    if (panelDragRef.current) {
+      const rect = outerCanvasRef.current?.getBoundingClientRect();
+      if (rect &&
+          e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top  && e.clientY <= rect.bottom) {
+        const def = panelDragRef.current.def;
+        const w = PART_W[def.id];
+        const h = PART_H[def.id];
+        const z = zoomRef.current;
+        const cx = (e.clientX - rect.left) / z;
+        const cy = (e.clientY - rect.top) / z;
+        const hl = attachHLRef.current;
+
+        const newPart: PlacedPart = {
+          instanceId: `${def.id}-${Date.now()}`,
+          def, overrides: {}, x: cx, y: cy, width: w, height: h,
+        };
+
+        if (def.id === 'fins' && hl) {
+          const parent = partsRef.current.find(p => p.instanceId === hl.partId);
+          if (parent) {
+            newPart.attachedTo = parent.instanceId;
+            newPart.attachSide = hl.side;
+            newPart.x = hl.side === 'left'
+              ? parent.x - parent.width / 2 - w / 2
+              : parent.x + parent.width / 2 + w / 2;
+            newPart.y = parent.y;
+          }
+        }
+
+        setParts(prev => [...prev, newPart]);
+      }
+      panelDragRef.current = null;
+      setGhostPos(null);
+      setAttachHighlight(null);
+      return;
+    }
+
+    if (canvasDragRef.current) {
+      canvasDragRef.current = null;
+      setSnapGuides([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('mousemove', handleGlobalMouseMove);
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [handleGlobalMouseMove, handleGlobalMouseUp]);
+
+  const startCanvasDrag = (part: PlacedPart, e: React.MouseEvent) => {
+    e.stopPropagation();
     e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom(z => Math.max(0.4, Math.min(2.5, z + delta)));
+    const rect = outerCanvasRef.current!.getBoundingClientRect();
+    const z = zoom;
+    const cx = (e.clientX - rect.left) / z;
+    const cy = (e.clientY - rect.top) / z;
+    canvasDragRef.current = {
+      id: part.instanceId,
+      offsetX: cx - part.x,
+      offsetY: cy - part.y,
+    };
+    setSelected(part.instanceId);
   };
 
   const updatePartOverride = (instanceId: string, key: string, value: number | string) => {
-    setParts(prev => prev.map(p => p.instanceId === instanceId ? { ...p, overrides: { ...p.overrides, [key]: value } } : p));
+    setParts(prev => prev.map(p =>
+      p.instanceId === instanceId ? { ...p, overrides: { ...p.overrides, [key]: value } } : p
+    ));
   };
 
   const removePart = (instanceId: string) => {
-    setParts(prev => prev.filter(p => p.instanceId !== instanceId));
+    setParts(prev => prev.filter(p => p.instanceId !== instanceId && p.attachedTo !== instanceId));
     setSelected(null);
   };
 
@@ -388,49 +515,65 @@ export default function Designer({ onRun }: Props) {
   const duplicatePart = (instanceId: string) => {
     const orig = parts.find(p => p.instanceId === instanceId);
     if (!orig) return;
-    const clone: PlacedPart = { ...orig, instanceId: `${orig.def.id}-${Date.now()}`, overrides: { ...orig.overrides } };
-    const idx = parts.findIndex(p => p.instanceId === instanceId);
-    setParts(prev => [...prev.slice(0, idx + 1), clone, ...prev.slice(idx + 1)]);
+    const clone: PlacedPart = {
+      ...orig,
+      instanceId: `${orig.def.id}-${Date.now()}`,
+      overrides: { ...orig.overrides },
+      x: orig.x + 20,
+      y: orig.y + 20,
+      attachedTo: undefined,
+      attachSide: undefined,
+    };
+    setParts(prev => [...prev, clone]);
   };
 
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(z => Math.max(0.4, Math.min(2.5, z + delta)));
+  };
+
+  const comY = calcCoM(parts);
   const selectedPart = parts.find(p => p.instanceId === selected) ?? null;
   const derived = deriveInputs(parts);
   const finalInputs: RocketInputs = {
     payloadMass: overrides.payloadMass ?? derived.payloadMass ?? 300,
-    fuelMass: overrides.fuelMass ?? derived.fuelMass ?? 5000,
-    dryMass: overrides.dryMass ?? derived.dryMass ?? 500,
-    thrustKN: overrides.thrustKN ?? derived.thrustKN ?? 162,
-    diameter: overrides.diameter ?? derived.diameter ?? 1.6,
-    propellant: overrides.propellant ?? derived.propellant ?? 'LOX/RP-1',
-    noseCone: overrides.noseCone ?? derived.noseCone ?? 'Ogive',
+    fuelMass:    overrides.fuelMass    ?? derived.fuelMass    ?? 5000,
+    dryMass:     overrides.dryMass     ?? derived.dryMass     ?? 500,
+    thrustKN:    overrides.thrustKN    ?? derived.thrustKN    ?? 162,
+    diameter:    overrides.diameter    ?? derived.diameter    ?? 1.6,
+    propellant:  overrides.propellant  ?? derived.propellant  ?? 'LOX/RP-1',
+    noseCone:    overrides.noseCone    ?? derived.noseCone    ?? 'Ogive',
   };
-
   const totalMass = finalInputs.dryMass + finalInputs.payloadMass + finalInputs.fuelMass;
   const twr = finalInputs.thrustKN > 0 ? (finalInputs.thrustKN * 1000) / (totalMass * G0) : 0;
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <PartsPanel onDragStart={setDraggingPart} />
+      <PartsPanel onPartMouseDown={(def, e) => {
+        panelDragRef.current = { def };
+        setGhostPos({ x: e.clientX, y: e.clientY });
+      }} />
 
       {/* Canvas area */}
       <div
-        className="flex-1 overflow-auto relative"
-        style={{ background: '#040408' }}
-        onDragOver={e => { e.preventDefault(); }}
-        onDrop={handleDrop}
+        ref={outerCanvasRef}
+        className="flex-1 relative overflow-hidden"
+        style={{ background: '#040408', cursor: canvasDragRef.current ? 'grabbing' : 'default' }}
+        onClick={() => setSelected(null)}
         onWheel={handleWheel}
       >
-        {/* Canvas controls */}
-        <div className="absolute top-2 left-2 flex gap-1.5 z-10">
+        {/* Controls */}
+        <div className="absolute top-2 left-2 flex gap-1.5 z-30">
           <button
-            onClick={() => setShowGrid(g => !g)}
+            onClick={e => { e.stopPropagation(); setShowGrid(g => !g); }}
             className="text-[9px] px-2 py-1 rounded border transition-colors"
             style={{ background: '#0a0a12', borderColor: showGrid ? '#7c3aed' : '#1e1e35', color: showGrid ? '#7c3aed' : '#64748b' }}
           >
             Grid
           </button>
           <button
-            onClick={() => setZoom(1)}
+            onClick={e => { e.stopPropagation(); setZoom(1); }}
             className="text-[9px] px-2 py-1 rounded border transition-colors"
             style={{ background: '#0a0a12', borderColor: '#1e1e35', color: '#64748b' }}
           >
@@ -440,27 +583,76 @@ export default function Designer({ onRun }: Props) {
 
         {parts.length > 0 && (
           <button
-            onClick={() => { setParts([]); setSelected(null); }}
-            className="absolute top-2 right-2 z-10 text-[10px] px-2 py-1 rounded border border-[#1e1e35] text-[#64748b] hover:text-[#ef4444] hover:border-[#ef4444]/30 transition-colors"
+            onClick={e => { e.stopPropagation(); setParts([]); setSelected(null); }}
+            className="absolute top-2 right-2 z-30 text-[10px] px-2 py-1 rounded border border-[#1e1e35] text-[#64748b] hover:text-[#ef4444] hover:border-[#ef4444]/30 transition-colors"
             style={{ background: '#0a0a12' }}
           >
             Clear
           </button>
         )}
 
-        <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', paddingTop: panY }}>
-          <canvas
-            ref={canvasRef}
-            width={CANVAS_W}
-            height={Math.max(400, totalH + 60)}
-            className="mx-auto block"
-            onClick={handleCanvasClick}
-            style={{ cursor: 'crosshair' }}
-          />
+        {/* Scalable part layer */}
+        <div
+          style={{
+            position: 'absolute', inset: 0,
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top left',
+            pointerEvents: 'none',
+          }}
+        >
+          {/* Grid overlay */}
+          {showGrid && (
+            <svg
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            >
+              <defs>
+                <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                  <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#grid)" />
+            </svg>
+          )}
+
+          {/* Snap guides */}
+          {snapGuides.map((g, i) => <SnapGuide key={i} axis={g.axis} value={g.value} />)}
+
+          {/* Parts */}
+          {parts.map(part => (
+            <PartRenderer
+              key={part.instanceId}
+              part={part}
+              selected={selected === part.instanceId}
+              highlightSide={attachHighlight?.partId === part.instanceId ? attachHighlight.side : undefined}
+              onMouseDown={e => startCanvasDrag(part, e)}
+              onClick={e => { e.stopPropagation(); setSelected(s => s === part.instanceId ? null : part.instanceId); }}
+            />
+          ))}
+
+          {/* CoM indicator */}
+          {comY !== null && (
+            <div style={{ position: 'absolute', left: 6, top: comY - 6, pointerEvents: 'none', zIndex: 25 }}>
+              <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#3b82f6', boxShadow: '0 0 8px #3b82f6' }} />
+              <span style={{ position: 'absolute', left: 16, top: 0, fontSize: 8, color: '#3b82f6', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>CoM</span>
+            </div>
+          )}
         </div>
+
+        {/* Empty state */}
+        {parts.length === 0 && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+            <p style={{ color: '#1e1e35', fontSize: 12, fontFamily: 'monospace', marginBottom: 6 }}>Drag parts here to build</p>
+            <p style={{ color: '#0f0f20', fontSize: 10, fontFamily: 'monospace' }}>↑ from Parts Library on the left</p>
+          </div>
+        )}
       </div>
 
-      {/* Right panel — inspector or summary, with optional science */}
+      {/* Ghost follows cursor globally */}
+      {ghostPos && panelDragRef.current && (
+        <GhostPart def={panelDragRef.current.def} x={ghostPos.x} y={ghostPos.y} />
+      )}
+
+      {/* Right panel */}
       <div className="w-72 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0a0a12', borderLeft: '1px solid #1e1e35' }}>
         {showScience ? (
           <SciencePanel selectedPartId={sciencePartId} onClose={() => setShowScience(false)} />
@@ -474,12 +666,16 @@ export default function Designer({ onRun }: Props) {
             onOpenScience={id => { setSciencePartId(id); setShowScience(true); }}
           />
         ) : (
-          <SummaryPanel derived={derived} overrides={overrides} setOverrides={setOverrides} twr={twr} totalMass={totalMass}
+          <SummaryPanel
+            derived={derived}
+            overrides={overrides}
+            setOverrides={setOverrides}
+            twr={twr}
+            totalMass={totalMass}
             onOpenScience={() => { setSciencePartId(null); setShowScience(true); }}
           />
         )}
 
-        {/* Run button */}
         <div className="p-3 flex-shrink-0" style={{ borderTop: '1px solid #1e1e35' }}>
           <button
             onClick={() => onRun(finalInputs)}
@@ -491,9 +687,11 @@ export default function Designer({ onRun }: Props) {
       </div>
     </div>
   );
-}
+});
 
-// --- Summary Panel ---
+export default Designer;
+
+// --- Summary Panel (unchanged from original) ---
 function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpenScience }: {
   derived: Partial<RocketInputs>;
   overrides: Partial<RocketInputs>;
@@ -503,11 +701,11 @@ function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpen
   onOpenScience: () => void;
 }) {
   const fields: { key: keyof RocketInputs; label: string; unit: string }[] = [
-    { key: 'payloadMass', label: 'Payload', unit: 'kg' },
-    { key: 'fuelMass',    label: 'Fuel',    unit: 'kg' },
+    { key: 'payloadMass', label: 'Payload',  unit: 'kg' },
+    { key: 'fuelMass',    label: 'Fuel',     unit: 'kg' },
     { key: 'dryMass',     label: 'Dry Mass', unit: 'kg' },
-    { key: 'thrustKN',   label: 'Thrust',   unit: 'kN' },
-    { key: 'diameter',   label: 'Diameter', unit: 'm' },
+    { key: 'thrustKN',    label: 'Thrust',   unit: 'kN' },
+    { key: 'diameter',    label: 'Diameter', unit: 'm'  },
   ];
 
   const twrColor = twr >= 1.3 ? '#22c55e' : twr >= 1.0 ? '#f59e0b' : '#ef4444';
@@ -516,7 +714,6 @@ function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpen
     <div className="p-3 flex-1 overflow-y-auto">
       <h3 className="text-[9px] uppercase tracking-widest text-[#64748b] mb-2">Summary / Override</h3>
 
-      {/* Live TWR indicator */}
       {totalMass > 0 && (
         <div className="mb-3 p-2 rounded border" style={{ background: '#040408', borderColor: '#1e1e35' }}>
           <div className="flex justify-between text-[10px]">
@@ -550,23 +747,35 @@ function SummaryPanel({ derived, overrides, setOverrides, twr, totalMass, onOpen
 
       <div className="mb-1.5">
         <label className="text-[9px] text-[#64748b] block mb-0.5">Propellant</label>
-        <select value={(overrides.propellant ?? derived.propellant ?? 'LOX/RP-1') as string}
+        <select
+          value={(overrides.propellant ?? derived.propellant ?? 'LOX/RP-1') as string}
           onChange={e => setOverrides({ ...overrides, propellant: e.target.value as PropellantType })}
-          className="sum-input">
-          {['LOX/RP-1','LOX/LH2','UDMH/N2O4','Solid'].map(p => <option key={p} value={p}>{p}</option>)}
+          className="sum-input"
+        >
+          {['LOX/RP-1', 'LOX/LH2', 'UDMH/N2O4', 'Solid'].map(p => (
+            <option key={p} value={p}>{p}</option>
+          ))}
         </select>
       </div>
 
       <div className="mb-3">
         <label className="text-[9px] text-[#64748b] block mb-0.5">Nose Cone</label>
-        <select value={(overrides.noseCone ?? derived.noseCone ?? 'Ogive') as string}
+        <select
+          value={(overrides.noseCone ?? derived.noseCone ?? 'Ogive') as string}
           onChange={e => setOverrides({ ...overrides, noseCone: e.target.value as NoseConeType })}
-          className="sum-input">
-          {['Ogive','Conical','Blunt'].map(n => <option key={n} value={n}>{n}</option>)}
+          className="sum-input"
+        >
+          {['Ogive', 'Conical', 'Blunt'].map(n => (
+            <option key={n} value={n}>{n}</option>
+          ))}
         </select>
       </div>
 
-      <button onClick={onOpenScience} className="w-full text-xs text-[#7c3aed] hover:text-[#06b6d4] border border-[#1e1e35] hover:border-[#7c3aed]/50 py-1.5 rounded transition-colors" style={{ background: 'transparent' }}>
+      <button
+        onClick={onOpenScience}
+        className="w-full text-xs text-[#7c3aed] hover:text-[#06b6d4] border border-[#1e1e35] hover:border-[#7c3aed]/50 py-1.5 rounded transition-colors"
+        style={{ background: 'transparent' }}
+      >
         🔬 How do rockets work?
       </button>
     </div>

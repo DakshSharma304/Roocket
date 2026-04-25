@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { FeedbackItem, FeedbackSeverity } from './analyzer';
+import { withGlossary } from '../glossary/autoWrap';
 
 interface Props {
   items: FeedbackItem[];
@@ -17,7 +18,7 @@ const SEVERITY_ICON: Record<FeedbackSeverity, string> = {
 function MetricBadge({ label, value, target }: { label: string; value: string; target: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 mt-1.5 px-2 py-0.5 rounded text-xs border border-[#1e1e35] bg-[#0d0d1a]">
-      <span className="text-[#94a3b8]">{label}</span>
+      <span className="text-[#94a3b8]">{withGlossary(label)}</span>
       <span className="text-[#e2e8f0] font-mono font-semibold">{value}</span>
       <span className="text-[#475569]">→</span>
       <span className="text-[#38bdf8] font-mono">{target}</span>
@@ -32,7 +33,7 @@ function FeedbackCard({ item }: { item: FeedbackItem }) {
     return (
       <div className="rounded-md border border-indigo-800/60 bg-indigo-950/50 px-4 py-3">
         <p className="text-sm font-semibold text-indigo-300">{item.title}</p>
-        <p className="mt-1 text-sm text-indigo-200/80">{item.explanation}</p>
+        <p className="mt-1 text-sm text-indigo-200/80">{withGlossary(item.explanation)}</p>
       </div>
     );
   }
@@ -46,11 +47,11 @@ function FeedbackCard({ item }: { item: FeedbackItem }) {
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-[#e2e8f0]">{item.title}</p>
-          <p className="mt-0.5 text-sm text-[#94a3b8]">{item.explanation}</p>
+          <p className="text-sm font-bold text-[#e2e8f0]">{withGlossary(item.title)}</p>
+          <p className="mt-0.5 text-sm text-[#94a3b8]">{withGlossary(item.explanation)}</p>
           {item.fix && (
             <p className="mt-1 text-sm text-cyan-400">
-              → {item.fix}
+              → {withGlossary(item.fix)}
             </p>
           )}
           {item.metric && (
@@ -77,13 +78,11 @@ export default function FeedbackPanel({ items }: Props) {
     );
   }
 
-  // Separate inference from the rest so it always renders last
   const mainItems = items.filter((i) => i.id !== 'inference');
   const inferenceItem = items.find((i) => i.id === 'inference');
 
   return (
     <div className="rounded-lg border border-[#1e1e35] bg-[#0a0a12] overflow-hidden">
-      {/* Header */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -110,7 +109,6 @@ export default function FeedbackPanel({ items }: Props) {
         </svg>
       </button>
 
-      {/* Body */}
       {expanded && (
         <div className="flex flex-col gap-2 px-4 pb-4 pt-1">
           {mainItems.map((item) => (

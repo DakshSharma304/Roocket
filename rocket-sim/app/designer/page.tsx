@@ -1,19 +1,28 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
-import Designer from '../components/Designer';
+import Designer, { DesignerHandle } from '../components/Designer';
 import VerdictScreen from '../components/VerdictScreen';
 import StarfieldWrapper from '../components/StarfieldWrapper';
+import { PART_DEFS } from '../components/PartsPanel';
 import { runSimulation } from '../physics/trajectory';
 import { validateInputs } from '../physics/validation';
 import type { RocketInputs, SimResult } from '../physics/trajectory';
 
 export default function DesignerPage() {
+  const designerRef = useRef<DesignerHandle>(null);
   const [result, setResult] = useState<SimResult | null>(null);
   const [lastInputs, setLastInputs] = useState<RocketInputs | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [calculating, setCalculating] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const handleRun = (inputs: RocketInputs) => {
     const validation = validateInputs(inputs);
@@ -22,7 +31,6 @@ export default function DesignerPage() {
     setCalculating(true);
     setProgress(0);
 
-    // fake progress ticks while sim runs synchronously
     let tick = 0;
     const interval = setInterval(() => {
       tick += Math.random() * 18 + 8;
@@ -39,6 +47,21 @@ export default function DesignerPage() {
         setCalculating(false);
       }, 300);
     }, 0);
+  };
+
+  const handleAddPart = (partId: string, isSwap: boolean, swapCategory?: string) => {
+    const def = PART_DEFS.find(d => d.id === partId);
+    if (!def) return;
+    setResult(null);
+    // Small delay so the verdict screen closes before the part lands on the canvas
+    setTimeout(() => {
+      if (isSwap && swapCategory) {
+        designerRef.current?.swapPart(swapCategory, def);
+      } else {
+        designerRef.current?.addPart(def);
+      }
+      setToast(`${def.label} added — re-run simulation to see improvement`);
+    }, 50);
   };
 
   return (
@@ -67,8 +90,18 @@ export default function DesignerPage() {
 
       {/* Main */}
       <div className="flex-1 overflow-hidden relative z-10">
-        <Designer onRun={handleRun} />
+        <Designer ref={designerRef} onRun={handleRun} />
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-lg text-sm text-[#e2e8f0] shadow-2xl"
+          style={{ background: 'rgba(13,13,26,0.97)', border: '1px solid rgba(124,58,237,0.4)', backdropFilter: 'blur(12px)' }}
+        >
+          {toast}
+        </div>
+      )}
 
       {/* Calculating overlay */}
       {calculating && (
@@ -86,7 +119,12 @@ export default function DesignerPage() {
 
       {/* Verdict overlay */}
       {result && lastInputs && (
-        <VerdictScreen result={result} inputs={lastInputs} onBack={() => setResult(null)} />
+        <VerdictScreen
+          result={result}
+          inputs={lastInputs}
+          onBack={() => setResult(null)}
+          onAddPart={handleAddPart}
+        />
       )}
     </div>
   );
