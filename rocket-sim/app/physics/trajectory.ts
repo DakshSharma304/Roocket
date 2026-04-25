@@ -66,9 +66,9 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   const dt = 0.5;
   const maxSteps = 4000;
 
-  // Gravity turn pitch program: launch vertical, pitch to horizontal by 100km
-  const KICK_ALT = 1000;       // m — start pitching here
-  const PITCH_END_ALT = 100000; // m — fully horizontal by here
+  // Gravity turn pitch program: launch vertical, pitch to horizontal by 120km
+  const KICK_ALT = 3000;        // m — start pitching here (clear dense lower troposphere first)
+  const PITCH_END_ALT = 120000; // m — fully horizontal by here
 
   const launchTWR = calcTwr(thrustN, mass);
 
@@ -128,9 +128,15 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     let thrustY = 0;
     let mdot = 0;
     if (burning && fuelRemaining > 0) {
-      thrustX = thrustN * Math.cos(pitchRad);
-      thrustY = thrustN * Math.sin(pitchRad);
-      mdot = massFlowRate(thrustN, isp);
+      // Auto-throttle through max Q — mirrors real launch vehicle guidance.
+      // Full thrust below warning threshold; linearly taper to 20% at fatal limit.
+      const qNow = dynamicPressure(altitude, speed);
+      const throttle = qNow <= MAX_Q_WARNING ? 1.0
+        : Math.max(0.2, 1.0 - 0.8 * (qNow - MAX_Q_WARNING) / (MAX_Q_FATAL - MAX_Q_WARNING));
+      const effectiveThrust = thrustN * throttle;
+      thrustX = effectiveThrust * Math.cos(pitchRad);
+      thrustY = effectiveThrust * Math.sin(pitchRad);
+      mdot = massFlowRate(effectiveThrust, isp);
     }
 
     // Drag opposes velocity vector

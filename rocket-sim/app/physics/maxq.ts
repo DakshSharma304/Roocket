@@ -13,5 +13,5 @@ export function dynamicPressure(altitudeM: number, velocityMs: number): number {
   return 0.5 * density * velocityMs * velocityMs;
 }
 
-export const MAX_Q_WARNING = 30000;
-export const MAX_Q_FATAL   = 80000;
+export const MAX_Q_WARNING = 45000;   // ~45 kPa — Falcon 9 Max Q is ~35-50 kPa
+export const MAX_Q_FATAL   = 110000;  // ~110 kPa — structural limit with safety margin
