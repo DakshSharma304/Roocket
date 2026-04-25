@@ -26,7 +26,8 @@ export function atmosphereAt(altitudeM: number): { temperature: number; pressure
 
   if (altitudeM >= 86000) {
     const scale = 7200;
-    const density = 0.00737 * Math.exp(-(altitudeM - 86000) / scale);
+    // Corrected constant: 6.96e-6 kg/m^3
+    const density = 0.00000696 * Math.exp(-(altitudeM - 86000) / scale);
     const temp = 186.87;
     const pressure = density * R_AIR * temp;
     return { temperature: temp, pressure, density };
