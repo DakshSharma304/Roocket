@@ -120,15 +120,15 @@ export default function VerdictScreen({ result, inputs, onBack, onAddPart }: Pro
       return `Peak altitude: ${(maxAltitudeM / 1000).toFixed(1)}km. Not even close to space. A weather balloon does better. 💀`;
     if (outcome === 'SUBORBITAL')
       return `Reached ${(maxAltitudeM / 1000).toFixed(0)}km — technically space, no orbit. You went up, you came down. 🔶`;
-    const needed = 7800;
-    const diff = needed - burnoutVelocityMs;
+    const neededVx = 7800;
+    const diff = neededVx - burnoutVelocityMs;
     if (diff > 200)
-      return `Delta-v is ${finalDeltaV.toFixed(0)}m/s. You needed ${needed}m/s. ${diff.toFixed(0)}m/s short — add more fuel or cry. 🔶`;
-    return `Reached ${(maxAltitudeM / 1000).toFixed(0)}km at ${burnoutVelocityMs.toFixed(0)}m/s. Orbital velocity confirmed. 🛰️ ✅`;
+      return `Burnout at ${burnoutVelocityMs.toFixed(0)} m/s horizontal — needed ${neededVx.toLocaleString()} m/s for orbit. ${diff.toFixed(0)} m/s short. 🔶`;
+    return `Reached ${(maxAltitudeM / 1000).toFixed(0)} km at ${burnoutVelocityMs.toFixed(0)} m/s horizontal. Orbital velocity confirmed. 🛰️ ✅`;
   })();
 
   const stats: Stat[] = [
-    { label: 'Delta-v',          rawValue: finalDeltaV / 1000,      value: `${(finalDeltaV / 1000).toFixed(2)} km/s`,  sub: 'LEO needs 7.80 km/s',  color: finalDeltaV >= 7800 ? '#22c55e' : '#ef4444',                              animate: true, animDecimals: 2, animSuffix: ' km/s' },
+    { label: 'Delta-v',          rawValue: finalDeltaV / 1000,      value: `${(finalDeltaV / 1000).toFixed(2)} km/s`,  sub: 'LEO needs ~9.2 km/s w/ losses',  color: finalDeltaV >= 9200 ? '#22c55e' : finalDeltaV >= 6000 ? '#f59e0b' : '#ef4444', animate: true, animDecimals: 2, animSuffix: ' km/s' },
     { label: 'Max Altitude',     rawValue: maxAltitudeM / 1000,     value: `${(maxAltitudeM / 1000).toFixed(1)} km`,    color: maxAltitudeM >= 200000 ? '#22c55e' : maxAltitudeM >= 100000 ? '#f59e0b' : '#ef4444',                    animate: true, animDecimals: 1, animSuffix: ' km' },
     { label: 'Burn Time',        rawValue: burnTimeS,               value: `${burnTimeS.toFixed(0)} s`,                                                                                                                                  animate: true, animDecimals: 0, animSuffix: ' s' },
     { label: 'Max Q',            rawValue: maxQ.pressure / 1000,    value: `${(maxQ.pressure / 1000).toFixed(1)} kPa`,  sub: `at ${(maxQ.altitudeM / 1000).toFixed(1)} km`, color: maxQ.pressure > MAX_Q_FATAL ? '#ef4444' : maxQ.pressure > MAX_Q_WARNING ? '#f59e0b' : '#22c55e', animate: true, animDecimals: 1, animSuffix: ' kPa' },

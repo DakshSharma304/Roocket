@@ -101,6 +101,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   let disintegrated = false;
   let disintegrationAlt: number | undefined;
   let leoAchieved = false;
+  let dvAccum = 0;          // actual Δv delivered: ∫(F_thrust / m) dt
   const trajectory: TrajectoryPoint[] = [];
 
   for (let step = 0; step < maxSteps; step++) {
@@ -137,6 +138,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
       thrustX = effectiveThrust * Math.cos(pitchRad);
       thrustY = effectiveThrust * Math.sin(pitchRad);
       mdot = massFlowRate(effectiveThrust, isp);
+      dvAccum += (effectiveThrust / mass) * dt;  // accumulate engine Δv each step
     }
 
     // Drag opposes velocity vector
@@ -174,7 +176,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     if (altitude > maxAlt) maxAlt = altitude;
     if (speed > maxVel) maxVel = speed;
 
-    if (!leoAchieved && altitude >= 160000 && vx >= 7600) leoAchieved = true;
+    if (!leoAchieved && altitude >= 200000 && vx >= 7800) leoAchieved = true;
 
     if (step % 4 === 0 || step < 20) {
       trajectory.push({ time: t, altitude, velocity: speed, vx, mass, dynamicPressure: q });
@@ -198,18 +200,16 @@ export function runSimulation(inputs: RocketInputs): SimResult {
 
   const maxQ = { pressure: maxQPressure, altitudeM: maxQAlt, velocity: maxQVel };
 
-  const avgAlt = maxAlt / 2;
-  const isp = interpolatedIsp(propellant, avgAlt);
-  const m0 = dryMass + payloadMass + fuelMass;
-  const m1 = dryMass + payloadMass;
-  const finalDeltaV = isp * G0 * Math.log(m0 / m1);
+  // Δv = integral of (F_thrust / m) dt — actual engine contribution, independent of gravity/drag losses.
+  // This correctly reflects Tsiolkovsky even with altitude-varying Isp and auto-throttle.
+  const finalDeltaV = dvAccum;
 
   let outcome: SimResult['outcome'];
   if (disintegrated) {
     outcome = 'DISINTEGRATED';
   } else if (launchTWR < 1.0) {
     outcome = 'PAD_SITTER';
-  } else if (leoAchieved || (burnoutAlt >= 160000 && burnoutVx >= 7600)) {
+  } else if (leoAchieved || (burnoutAlt >= 200000 && burnoutVx >= 7800)) {
     outcome = 'LEO';
   } else if (maxAlt >= 100000) {
     outcome = 'SUBORBITAL';
