@@ -91,16 +91,6 @@ export function generateRecommendations(result: SimResult, inputs: RocketInputs)
     });
   }
 
-  if (launchTWR >= 1.0) {
-    recs.push({
-      id: 'add-fins',
-      reason: 'No fins detected — passive aerodynamic stability uncontrolled during ascent.',
-      partId: 'fin-left',
-      actionLabel: 'Add Fins',
-      expectedImprovement: 'Passive stabilization through Max Q',
-      priority: 'nice-to-have',
-    });
-  }
 
   const payloadFraction = payloadMass / totalMass;
   if (payloadFraction > 0.08 && launchTWR >= 1.0) {
