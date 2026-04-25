@@ -66,11 +66,17 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   const dt = 0.5;
   const maxSteps = 4000;
 
-  // Gravity turn pitch program: launch vertical, pitch to horizontal by 80km
-  const KICK_ALT = 3000;       // m — start pitching here (clear dense lower troposphere first)
-  const PITCH_END_ALT = 80000; // m — fully horizontal by here; builds vx in thin air above 40km
-  const MAX_Q_TARGET = 40000;  // Pa — guidance target during throttle-down through max Q
-  const MIN_THROTTLE = 0.1;    // Keep some thrust to avoid a prolonged gravity-loss stall
+  // Guidance targets requested by user tuning.
+  const TURN_START_SPEED = 100;    // m/s — begin gravity turn once clear of initial pad acceleration
+  const INITIAL_TILT_DEG = 4;      // deg from vertical immediately after turn starts (2-5 deg target)
+  const TURN_END_ALT = 40000;      // m — be close to horizon by this altitude
+  const FINAL_PITCH_DEG = 5;       // deg above horizon (near-horizontal, not exactly zero)
+  const MAX_Q_TARGET = 35000;      // Pa — keep ascent max-Q under ~35 kPa when guidance can do so
+  const MAX_Q_BAND_MIN = 5000;     // m
+  const MAX_Q_BAND_MAX = 12000;    // m
+  const HIGH_TWR_THRESHOLD = 1.6;  // only apply active max-Q throttle shaping for punchy liftoff TWR
+  const MIN_THROTTLE = 0.1;        // global lower bound to avoid engine cutoff artifacts
+  const MIN_MAXQ_THROTTLE = 0.35;  // practical floor inside the 5-12 km max-Q control band
 
   const launchTWR = calcTwr(thrustN, mass);
 
@@ -104,6 +110,8 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   let disintegrationAlt: number | undefined;
   let leoAchieved = false;
   let dvAccum = 0;          // actual Δv delivered: ∫(F_thrust / m) dt
+  let turnStarted = false;
+  let turnStartAltitude = 0;
   const trajectory: TrajectoryPoint[] = [];
 
   for (let step = 0; step < maxSteps; step++) {
@@ -116,14 +124,21 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     const dragMag = 0.5 * density * speed * speed * cd * area;
     const grav = G0 * (R_EARTH / (R_EARTH + altitude)) ** 2;
 
-    // Pitch program: angle from horizontal (90° = vertical, 0° = horizontal)
+    // Pitch program: angle from horizontal (90deg = vertical, 0deg = horizontal)
+    if (!turnStarted && speed >= TURN_START_SPEED) {
+      turnStarted = true;
+      turnStartAltitude = altitude;
+    }
     let pitchRad: number;
-    if (altitude <= KICK_ALT) {
+    if (!turnStarted) {
       pitchRad = Math.PI / 2;
-    } else if (altitude >= PITCH_END_ALT) {
-      pitchRad = 0;
     } else {
-      pitchRad = (Math.PI / 2) * (1 - (altitude - KICK_ALT) / (PITCH_END_ALT - KICK_ALT));
+      const startPitch = ((90 - INITIAL_TILT_DEG) * Math.PI) / 180;
+      const endPitch = (FINAL_PITCH_DEG * Math.PI) / 180;
+      const turnSpan = Math.max(1, TURN_END_ALT - turnStartAltitude);
+      const progress = Math.max(0, Math.min(1, (altitude - turnStartAltitude) / turnSpan));
+      const eased = 1 - Math.pow(1 - progress, 1.6); // front-load pitch-over for a more aggressive turn
+      pitchRad = startPitch + (endPitch - startPitch) * eased;
     }
 
     const isp = interpolatedIsp(propellant, altitude);
@@ -140,10 +155,11 @@ export function runSimulation(inputs: RocketInputs): SimResult {
         // Quadratic taper softens the onset and clamps hard near the structural limit.
         throttle = Math.max(MIN_THROTTLE, 1.0 - 0.9 * over * over);
       }
-      if (qNow > MAX_Q_TARGET) {
-        // q scales with v^2; this keeps pressure near the guidance target when possible.
+      const inMaxQControlBand = altitude >= MAX_Q_BAND_MIN && altitude <= MAX_Q_BAND_MAX;
+      if (launchTWR >= HIGH_TWR_THRESHOLD && inMaxQControlBand && qNow > MAX_Q_TARGET) {
+        // q scales with v^2; gently trim thrust in the 5-12 km band to stay near the target.
         const targetScale = Math.sqrt(MAX_Q_TARGET / qNow);
-        throttle = Math.min(throttle, Math.max(MIN_THROTTLE, targetScale));
+        throttle = Math.min(throttle, Math.max(MIN_MAXQ_THROTTLE, targetScale));
       }
       const effectiveThrust = thrustN * throttle;
       thrustX = effectiveThrust * Math.cos(pitchRad);
@@ -182,7 +198,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     if (q > maxQPressure) {
       maxQPressure = q;
       maxQAlt = altitude;
-      maxQVel = speed;
+      maxQVel = updatedSpeed;
     }
 
     if (altitude > maxAlt) maxAlt = altitude;
