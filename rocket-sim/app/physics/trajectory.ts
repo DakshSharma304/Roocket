@@ -68,8 +68,9 @@ export function runSimulation(inputs: RocketInputs): SimResult {
 
   // Guidance targets requested by user tuning.
   const TURN_START_SPEED = 100;    // m/s — begin gravity turn once clear of initial pad acceleration
+  const TURN_START_ALT_MIN = 1200; // m — avoid tipping too early in dense air
   const INITIAL_TILT_DEG = 4;      // deg from vertical immediately after turn starts (2-5 deg target)
-  const TURN_END_ALT = 40000;      // m — be close to horizon by this altitude
+  const TURN_END_ALT = 70000;      // m — complete main turn higher to preserve vertical energy
   const FINAL_PITCH_DEG = 5;       // deg above horizon (near-horizontal, not exactly zero)
   const MAX_Q_TARGET = 35000;      // Pa — keep ascent max-Q under ~35 kPa when guidance can do so
   const MAX_Q_BAND_MIN = 5000;     // m
@@ -125,7 +126,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     const grav = G0 * (R_EARTH / (R_EARTH + altitude)) ** 2;
 
     // Pitch program: angle from horizontal (90deg = vertical, 0deg = horizontal)
-    if (!turnStarted && speed >= TURN_START_SPEED) {
+    if (!turnStarted && speed >= TURN_START_SPEED && altitude >= TURN_START_ALT_MIN) {
       turnStarted = true;
       turnStartAltitude = altitude;
     }
@@ -137,8 +138,12 @@ export function runSimulation(inputs: RocketInputs): SimResult {
       const endPitch = (FINAL_PITCH_DEG * Math.PI) / 180;
       const turnSpan = Math.max(1, TURN_END_ALT - turnStartAltitude);
       const progress = Math.max(0, Math.min(1, (altitude - turnStartAltitude) / turnSpan));
-      const eased = 1 - Math.pow(1 - progress, 1.6); // front-load pitch-over for a more aggressive turn
+      const eased = 1 - Math.pow(1 - progress, 0.8); // gentler early turn, stronger later completion
       pitchRad = startPitch + (endPitch - startPitch) * eased;
+
+      // Keep enough climb angle during lower/mid atmosphere so orbit attempts do not flatten too early.
+      const minPitchDeg = altitude < 25000 ? 45 : altitude < 50000 ? 25 : altitude < 80000 ? 10 : FINAL_PITCH_DEG;
+      pitchRad = Math.max(pitchRad, (minPitchDeg * Math.PI) / 180);
     }
 
     const isp = interpolatedIsp(propellant, altitude);
