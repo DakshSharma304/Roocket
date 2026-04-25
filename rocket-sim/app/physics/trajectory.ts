@@ -18,7 +18,8 @@ export interface RocketInputs {
 export interface TrajectoryPoint {
   time: number;
   altitude: number;
-  velocity: number;
+  velocity: number;  // total speed magnitude
+  vx: number;        // horizontal (orbital) velocity
   mass: number;
   dynamicPressure: number;
 }
@@ -58,16 +59,22 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   const area = Math.PI * (diameter / 2) ** 2;
 
   let mass = dryMass + payloadMass + fuelMass;
-  let velocity = 0;
+  // 2D state: vx = horizontal (orbital), vy = vertical
+  let vx = 0;
+  let vy = 0;
   let altitude = 0;
   const dt = 0.5;
   const maxSteps = 4000;
+
+  // Gravity turn pitch program: launch vertical, pitch to horizontal by 100km
+  const KICK_ALT = 1000;       // m — start pitching here
+  const PITCH_END_ALT = 100000; // m — fully horizontal by here
 
   const launchTWR = calcTwr(thrustN, mass);
 
   if (launchTWR < 1.0) {
     return {
-      trajectory: [{ time: 0, altitude: 0, velocity: 0, mass, dynamicPressure: 0 }],
+      trajectory: [{ time: 0, altitude: 0, velocity: 0, vx: 0, mass, dynamicPressure: 0 }],
       maxAltitudeM: 0,
       maxVelocityMs: 0,
       burnoutAltitudeM: 0,
@@ -84,6 +91,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   let burning = true;
   let burnTime = 0;
   let burnoutAlt = 0;
+  let burnoutVx = 0;
   let burnoutV = 0;
   let maxAlt = 0;
   let maxVel = 0;
@@ -92,29 +100,49 @@ export function runSimulation(inputs: RocketInputs): SimResult {
   let maxQVel = 0;
   let disintegrated = false;
   let disintegrationAlt: number | undefined;
+  let leoAchieved = false;
   const trajectory: TrajectoryPoint[] = [];
 
   for (let step = 0; step < maxSteps; step++) {
     const t = step * dt;
     const { density } = atmosphereAt(altitude);
     const sos = speedOfSound(altitude);
-    const mach = velocity / Math.max(sos, 1);
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    const mach = speed / Math.max(sos, 1);
     const cd = dragCoeff(noseCone, mach);
-    const drag = 0.5 * density * velocity * velocity * cd * area;
+    const dragMag = 0.5 * density * speed * speed * cd * area;
     const grav = G0 * (R_EARTH / (R_EARTH + altitude)) ** 2;
 
-    const isp = interpolatedIsp(propellant, altitude);
-    let thrust = 0;
-    let mdot = 0;
-    if (burning && fuelRemaining > 0) {
-      thrust = thrustN;
-      mdot = massFlowRate(thrust, isp);
+    // Pitch program: angle from horizontal (90° = vertical, 0° = horizontal)
+    let pitchRad: number;
+    if (altitude <= KICK_ALT) {
+      pitchRad = Math.PI / 2;
+    } else if (altitude >= PITCH_END_ALT) {
+      pitchRad = 0;
+    } else {
+      pitchRad = (Math.PI / 2) * (1 - (altitude - KICK_ALT) / (PITCH_END_ALT - KICK_ALT));
     }
 
-    const netForce = thrust - drag - grav * mass;
-    const accel = netForce / mass;
-    velocity += accel * dt;
-    altitude += velocity * dt;
+    const isp = interpolatedIsp(propellant, altitude);
+    let thrustX = 0;
+    let thrustY = 0;
+    let mdot = 0;
+    if (burning && fuelRemaining > 0) {
+      thrustX = thrustN * Math.cos(pitchRad);
+      thrustY = thrustN * Math.sin(pitchRad);
+      mdot = massFlowRate(thrustN, isp);
+    }
+
+    // Drag opposes velocity vector
+    const dragX = speed > 0 ? -dragMag * (vx / speed) : 0;
+    const dragY = speed > 0 ? -dragMag * (vy / speed) : 0;
+
+    const accelX = (thrustX + dragX) / mass;
+    const accelY = (thrustY + dragY - grav * mass) / mass;
+
+    vx += accelX * dt;
+    vy += accelY * dt;
+    altitude += vy * dt;
 
     if (burning && fuelRemaining > 0) {
       const consumed = mdot * dt;
@@ -125,22 +153,25 @@ export function runSimulation(inputs: RocketInputs): SimResult {
         fuelRemaining = 0;
         burning = false;
         burnoutAlt = altitude;
-        burnoutV = velocity;
+        burnoutVx = vx;
+        burnoutV = speed;
       }
     }
 
-    const q = dynamicPressure(altitude, Math.abs(velocity));
+    const q = dynamicPressure(altitude, speed);
     if (q > maxQPressure) {
       maxQPressure = q;
       maxQAlt = altitude;
-      maxQVel = velocity;
+      maxQVel = speed;
     }
 
     if (altitude > maxAlt) maxAlt = altitude;
-    if (velocity > maxVel) maxVel = velocity;
+    if (speed > maxVel) maxVel = speed;
+
+    if (!leoAchieved && altitude >= 200000 && vx >= 7800) leoAchieved = true;
 
     if (step % 4 === 0 || step < 20) {
-      trajectory.push({ time: t, altitude, velocity, mass, dynamicPressure: q });
+      trajectory.push({ time: t, altitude, velocity: speed, vx, mass, dynamicPressure: q });
     }
 
     if (q > MAX_Q_FATAL) {
@@ -150,11 +181,13 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     }
 
     if (altitude < 0 && step > 0) break;
+    if (leoAchieved && !burning) break;
   }
 
   if (!burning) {
     burnoutAlt = burnoutAlt || altitude;
-    burnoutV = burnoutV || velocity;
+    burnoutV = burnoutV || Math.sqrt(vx * vx + vy * vy);
+    burnoutVx = burnoutVx || vx;
   }
 
   const maxQ = { pressure: maxQPressure, altitudeM: maxQAlt, velocity: maxQVel };
@@ -170,7 +203,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     outcome = 'DISINTEGRATED';
   } else if (launchTWR < 1.0) {
     outcome = 'PAD_SITTER';
-  } else if (burnoutAlt >= 200000 && burnoutV >= 7800) {
+  } else if (leoAchieved || (burnoutAlt >= 200000 && burnoutVx >= 7800)) {
     outcome = 'LEO';
   } else if (maxAlt >= 100000) {
     outcome = 'SUBORBITAL';
@@ -183,7 +216,7 @@ export function runSimulation(inputs: RocketInputs): SimResult {
     maxAltitudeM: maxAlt,
     maxVelocityMs: maxVel,
     burnoutAltitudeM: burnoutAlt,
-    burnoutVelocityMs: burnoutV,
+    burnoutVelocityMs: burnoutVx || burnoutV,  // horizontal velocity for orbital context
     burnTimeS: burnTime,
     maxQ,
     finalDeltaV,
